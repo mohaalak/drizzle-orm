@@ -1,3 +1,4 @@
+import type { NestEmbedded } from '~/embed.ts';
 import type {
 	SelectedFields as SelectedFieldsBase,
 	SelectedFieldsFlat as SelectedFieldsFlatBase,
@@ -123,7 +124,7 @@ export type PgSelectJoin<
 				T['_']['tableName'],
 				T['_']['selection'],
 				TJoinedName,
-				TJoinedTable extends Table ? TJoinedTable['_']['columns']
+				TJoinedTable extends Table ? NestEmbedded<TJoinedTable['_']['columns']>
 					: TJoinedTable extends Subquery | View ? Assume<TJoinedTable['_']['selectedFields'], SelectedFields>
 					: never,
 				T['_']['selectMode']
