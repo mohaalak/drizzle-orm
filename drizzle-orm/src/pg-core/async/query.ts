@@ -1,3 +1,4 @@
+import { hasEmbeddedRows } from '~/embed.ts';
 import { entityKind } from '~/entity.ts';
 import { QueryPromise } from '~/query-promise.ts';
 import { relationalQueryCacheConfig, relationalQueryCacheMetadata } from '~/relations.ts';
@@ -29,7 +30,9 @@ export class PgAsyncRelationalQuery<TResult> extends PgRelationalQuery<PgAsyncRe
 			const isFirst = this.mode === 'first';
 
 			const { query, builtQuery, usedTables } = this._toSQL();
-			const shape = this.shape ??= dialect.shapeGenerator?.(
+			// Driver-built shapes return embedded columns under their dotted keys, so a selection
+			// reading any goes through the mapper, which nests them.
+			const shape = this.shape ??= hasEmbeddedRows(query.selection) ? undefined : dialect.shapeGenerator?.(
 				{ type: 'relational', fields: query.selection },
 				undefined,
 			);

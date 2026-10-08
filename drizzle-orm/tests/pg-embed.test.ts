@@ -1,6 +1,7 @@
 import { beforeAll, describe, expect, test } from 'vitest';
 import { alias, camelCase, embed, getTableConfig, index, integer, pgTable, serial, snakeCase, text } from '~/pg-core';
 import { drizzle } from '~/pglite';
+import { defineRelations } from '~/relations';
 import { asc, eq, sql } from '~/sql';
 
 const users = pgTable('users', {
@@ -168,5 +169,61 @@ describe('embed', () => {
 		expect(db.insert(plain).values({ cityId: 1 }).toSQL().sql).toBe(
 			'insert into "plain" ("id", "cityId") values (default, $1)',
 		);
+	});
+});
+
+const shops = pgTable('shops', {
+	id: serial().primaryKey(),
+	location: embed({ city: text().notNull(), geo: embed({ lat: integer() }) }),
+});
+
+const orders = pgTable('orders', {
+	id: serial().primaryKey(),
+	shopId: integer().notNull(),
+	delivery: embed({ city: text() }),
+});
+
+const relations = defineRelations({ shops, orders }, (r) => ({
+	shops: { orders: r.many.orders({ from: r.shops.id, to: r.orders.shopId }) },
+	orders: { shop: r.one.shops({ from: r.orders.shopId, to: r.shops.id, optional: false }) },
+}));
+
+describe.each([
+	{ jit: false },
+	{ jit: true },
+])('embed in relational queries (jit: $jit)', ({ jit }) => {
+	const rqb = drizzle('memory://', { relations, jit });
+
+	beforeAll(async () => {
+		await rqb.execute(sql`
+			create table shops (id serial primary key, location_city text not null, location_geo_lat integer)
+		`);
+		await rqb.execute(sql`create table orders (id serial primary key, "shopId" integer not null, delivery_city text)`);
+		await rqb.insert(shops).values({ location: { city: 'Berlin', geo: { lat: 52 } } });
+		await rqb.insert(orders).values([{ shopId: 1, delivery: { city: 'Potsdam' } }, { shopId: 1 }]);
+	});
+
+	test('nests groups in the rows it reads', async () => {
+		expect(await rqb.query.shops.findFirst()).toEqual({ id: 1, location: { city: 'Berlin', geo: { lat: 52 } } });
+	});
+
+	test('nests groups in loaded relations', async () => {
+		const shop = await rqb.query.shops.findFirst({ with: { orders: { orderBy: { id: 'asc' } } } });
+		expect(shop).toEqual({
+			id: 1,
+			location: { city: 'Berlin', geo: { lat: 52 } },
+			orders: [
+				{ id: 1, shopId: 1, delivery: { city: 'Potsdam' } },
+				{ id: 2, shopId: 1, delivery: { city: null } },
+			],
+		});
+
+		const order = await rqb.query.orders.findMany({ with: { shop: true }, orderBy: { id: 'asc' }, limit: 1 });
+		expect(order).toEqual([{
+			id: 1,
+			shopId: 1,
+			delivery: { city: 'Potsdam' },
+			shop: { id: 1, location: { city: 'Berlin', geo: { lat: 52 } } },
+		}]);
 	});
 });

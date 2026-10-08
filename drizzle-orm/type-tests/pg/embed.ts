@@ -73,6 +73,8 @@ Expect<
 	Expect<Equal<typeof rows, User[]>>();
 	// @ts-expect-error - not a column of the group
 	db.update(users).set({ address: { country: 'DE' } });
+	// Writing `null` to a group clears every column in it.
+	db.update(users).set({ note: null, address: { geo: null } });
 }
 
 {
