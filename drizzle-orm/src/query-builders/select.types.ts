@@ -1,5 +1,6 @@
 import type { ChangeColumnTableName, ColumnType, Dialect } from '~/column-builder.ts';
 import type { AnyColumn, Column, ColumnBaseConfig, GetColumnData, UpdateColConfig } from '~/column.ts';
+import type { NestEmbedded } from '~/embed.ts';
 import type { SelectedFields } from '~/operations.ts';
 import type { ColumnsSelection, SQL } from '~/sql/sql.ts';
 import type { Subquery } from '~/subquery.ts';
@@ -49,7 +50,7 @@ type SelectPartialResult<TFields, TNullability extends Record<string, JoinNullab
 	TNullability ? {
 		[Key in keyof TFields]: TFields[Key] extends infer TField
 			? TField extends Table ? TField['_']['name'] extends keyof TNullability ? ApplyNullability<
-						SelectResultFields<TField['_']['columns']>,
+						SelectResultFields<NestEmbedded<TField['_']['columns']>>,
 						TNullability[TField['_']['name']]
 					>
 				: never
@@ -71,7 +72,8 @@ type SelectPartialResult<TFields, TNullability extends Record<string, JoinNullab
 							TTableName extends keyof TNullability ? TNullability[TTableName] : 'nullable'
 						>
 					: SelectPartialResult<TField, TNullability>
-				: never
+					// A group holding further groups, such as an `embed()` group with one nested in it.
+				: SelectPartialResult<TField, TNullability>
 			: never
 			: never;
 	}
@@ -172,13 +174,15 @@ export type GetSelectTableName<TTable extends TableLike> = TTable extends Table 
 	: TTable extends SQL ? undefined
 	: never;
 
-export type GetSelectTableSelection<TTable extends TableLike> = TTable extends Table ? TTable['_']['columns']
+export type GetSelectTableSelection<TTable extends TableLike> = TTable extends Table
+	? NestEmbedded<TTable['_']['columns']>
 	: TTable extends Subquery | View ? Assume<TTable['_']['selectedFields'], ColumnsSelection>
 	: TTable extends SQL ? {}
 	: never;
 
 export type SelectResultField<T, TDeep extends boolean = true> = T extends DrizzleTypeError<any> ? T
-	: T extends Table ? Equal<TDeep, true> extends true ? SelectResultField<T['_']['columns'], false> : never
+	: T extends Table
+		? Equal<TDeep, true> extends true ? SelectResultField<NestEmbedded<T['_']['columns']>, false> : never
 	: T extends Column<any> ? GetColumnData<T>
 	: T extends SQL | SQL.Aliased ? T['_']['type']
 	: T extends Record<string, any> ? SelectResultFields<T, true>

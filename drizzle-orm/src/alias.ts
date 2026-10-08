@@ -3,6 +3,7 @@ import type * as V1 from './_relations.ts';
 import { OriginalColumn } from './column-common.ts';
 import type { AnyColumn } from './column.ts';
 import { Column } from './column.ts';
+import { EmbeddedColumns } from './embed.ts';
 import { entityKind, is } from './entity.ts';
 import { isSQLWrapper, SQL, sql } from './sql/sql.ts';
 import { Subquery } from './subquery.ts';
@@ -114,6 +115,11 @@ export class TableAliasProxyHandler<T extends Table | View> implements ProxyHand
 			return proxiedColumns;
 		}
 
+		if (prop === Table.Symbol.Shape) {
+			const shape = (target as Table)[Table.Symbol.Shape];
+			return shape && this.aliasEmbedded(target, shape, {});
+		}
+
 		const value = target[prop as keyof typeof target];
 		if (is(value, Column)) {
 			return new Proxy(
@@ -122,7 +128,24 @@ export class TableAliasProxyHandler<T extends Table | View> implements ProxyHand
 			);
 		}
 
+		if (is(value, EmbeddedColumns)) {
+			return this.aliasEmbedded(target, value, new EmbeddedColumns());
+		}
+
 		return value;
+	}
+
+	private aliasEmbedded<TResult extends Record<string, unknown>>(
+		target: T,
+		columns: Record<string, unknown>,
+		result: TResult,
+	): TResult {
+		for (const [key, value] of Object.entries(columns)) {
+			(result as Record<string, unknown>)[key] = is(value, Column)
+				? new Proxy(value, new ColumnTableAliasProxyHandler(new Proxy(target, this), this.ignoreColumnAlias))
+				: this.aliasEmbedded(target, value as Record<string, unknown>, new EmbeddedColumns());
+		}
+		return result;
 	}
 }
 
