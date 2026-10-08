@@ -1,12 +1,13 @@
 import type { ColumnType, GeneratedColumnConfig, GeneratedIdentityConfig } from '~/column-builder.ts';
 import { Column } from '~/column.ts';
+import type { EmbedBuilder, FlattenEmbedBuilders } from '~/embed.ts';
 import { entityKind } from '~/entity.ts';
 import type { ForeignKey, UpdateDeleteAction } from '~/pg-core/foreign-keys.ts';
 import { ForeignKeyBuilder } from '~/pg-core/foreign-keys.ts';
 import type { AnyPgTable, PgTable } from '~/pg-core/table.ts';
 import type { SQL } from '~/sql/sql.ts';
 import { iife } from '~/tracing-utils.ts';
-import type { Update } from '~/utils.ts';
+import type { Assume, Update } from '~/utils.ts';
 import type { PostgresType } from '../codecs.ts';
 import type { PgIndexOpClass } from '../indexes.ts';
 
@@ -139,20 +140,32 @@ export type PgBuildColumn<
 	>,
 > = PgColumn<ColumnType, TBuiltConfig, {}>;
 
+/** A table definition: column builders, optionally grouped with `embed()`. */
+export type PgTableColumnsMap = Record<string, AnyPgColumnBuilder | EmbedBuilder>;
+
+type HasEmbeds<TConfigMap> = [Extract<TConfigMap[keyof TConfigMap], EmbedBuilder>] extends [never] ? false : true;
+
 export type PgBuildColumns<
-	out TTableName extends string,
-	out TConfigMap extends Record<string, AnyPgColumnBuilder>,
+	TTableName extends string,
+	TConfigMap extends PgTableColumnsMap,
+> = HasEmbeds<TConfigMap> extends true ? PgBuildFlatColumns<TTableName, FlattenEmbedBuilders<TConfigMap>>
+	: PgBuildFlatColumns<TTableName, TConfigMap>;
+
+type PgBuildFlatColumns<
+	TTableName extends string,
+	TConfigMap,
 > =
 	& {
-		[Key in keyof TConfigMap]: PgBuildColumn<TTableName, TConfigMap[Key]>;
+		[Key in keyof TConfigMap]: PgBuildColumn<TTableName, Assume<TConfigMap[Key], AnyPgColumnBuilder>>;
 	}
 	& {};
 
 export type PgBuildExtraConfigColumns<
-	out TConfigMap extends Record<string, AnyPgColumnBuilder>,
+	out TConfigMap extends PgTableColumnsMap,
 > =
 	& {
-		[Key in keyof TConfigMap]: ExtraConfigColumn;
+		[Key in keyof TConfigMap]: TConfigMap[Key] extends EmbedBuilder<infer TInner> ? PgBuildExtraConfigColumns<TInner>
+			: ExtraConfigColumn;
 	}
 	& {};
 

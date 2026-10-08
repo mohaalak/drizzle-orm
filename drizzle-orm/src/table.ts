@@ -1,5 +1,6 @@
 import type { View } from '~/view.ts';
 import type { Column, Columns, GetColumnData } from './column.ts';
+import type { NestEmbedded } from './embed.ts';
 import { entityKind } from './entity.ts';
 import type { OptionalKeyOnly, RequiredKeyOnly } from './operations.ts';
 import { TableName } from './table.utils.ts';
@@ -22,6 +23,9 @@ export const TableSchema = Symbol.for('drizzle:Schema');
 
 /** @internal */
 export const TableColumns = Symbol.for('drizzle:Columns');
+
+/** @internal */
+export const TableShape = Symbol.for('drizzle:Shape');
 
 /** @internal */
 export const ExtraConfigColumns = Symbol.for('drizzle:ExtraConfigColumns');
@@ -63,6 +67,7 @@ export class Table<out T extends TableConfig = TableConfig> {
 		Schema: TableSchema as typeof TableSchema,
 		OriginalName: OriginalName as typeof OriginalName,
 		Columns: TableColumns as typeof TableColumns,
+		Shape: TableShape as typeof TableShape,
 		ExtraConfigColumns: ExtraConfigColumns as typeof ExtraConfigColumns,
 		BaseName: BaseName as typeof BaseName,
 		IsAlias: IsAlias as typeof IsAlias,
@@ -87,6 +92,13 @@ export class Table<out T extends TableConfig = TableConfig> {
 
 	/** @internal */
 	[TableColumns]!: T['columns'];
+
+	/**
+	 * @internal
+	 * The columns as the table exposes them, with `embed()` groups nested. Unset when the table
+	 * has no groups, in which case it is the same as the column map.
+	 */
+	[TableShape]?: Record<string, any>;
 
 	/** @internal */
 	[ExtraConfigColumns]!: Record<string, unknown>;
@@ -225,9 +237,10 @@ export type InferModel<
 	TInferMode extends 'select' | 'insert' = 'select',
 > = InferModelFromColumns<TTable['_']['columns'], TInferMode>;
 
+/** A table's row, with `embed()` groups nested. */
 export type InferSelectModel<
 	TTable extends Table,
-> = InferModelFromColumns<TTable['_']['columns'], 'select'>;
+> = NestEmbedded<InferModelFromColumns<TTable['_']['columns'], 'select'>>;
 
 export type InferInsertModel<
 	TTable extends Table,
@@ -238,8 +251,8 @@ export type InferEnum<T> = T extends { enumValues: readonly (infer U)[] } ? U
 	: never;
 
 export interface InferTableColumnsModels<TColumns extends Columns> {
-	readonly $inferSelect: InferModelFromColumns<TColumns, 'select'>;
-	readonly $inferInsert: InferModelFromColumns<TColumns, 'insert', { override: false }>;
+	readonly $inferSelect: NestEmbedded<InferModelFromColumns<TColumns, 'select'>>;
+	readonly $inferInsert: NestEmbedded<InferModelFromColumns<TColumns, 'insert', { override: false }>>;
 }
 
 export type RequiredInsertKeys<TTable extends Table, TColumns extends Record<string, Column> = TTable['_']['columns']> =

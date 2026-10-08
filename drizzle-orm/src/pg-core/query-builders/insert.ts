@@ -1,3 +1,4 @@
+import { flattenEmbeddedValues, getTableShape, type NestEmbedded } from '~/embed.ts';
 import { entityKind, is } from '~/entity.ts';
 import type { PgDialect } from '~/pg-core/dialect.ts';
 import type { IndexColumn } from '~/pg-core/indexes.ts';
@@ -9,7 +10,7 @@ import { SelectionProxyHandler } from '~/selection-proxy.ts';
 import type { ColumnsSelection, CommentInput, Placeholder, Query, SQLWrapper } from '~/sql/sql.ts';
 import { SQL, sql } from '~/sql/sql.ts';
 import type { Subquery } from '~/subquery.ts';
-import type { InferInsertModel } from '~/table.ts';
+import type { InferModelFromColumns } from '~/table.ts';
 import { getTableName, Table } from '~/table.ts';
 import { type Assume, type DrizzleTypeError, mapUpdateSet, orderSelectedFields } from '~/utils.ts';
 import type { AnyPgColumn, PgColumn } from '../columns/common.ts';
@@ -36,21 +37,27 @@ export type PgInsertValue<
 	TTable extends PgTable<TableConfig>,
 	OverrideT extends boolean = false,
 	TColumnsList extends string[] | 'all' = 'all',
-	TModel extends Record<string, any> = InferInsertModel<TTable, { override: OverrideT }>,
+	TModel extends Record<string, any> = InferModelFromColumns<TTable['_']['columns'], 'insert', { override: OverrideT }>,
 > =
-	& {
-		[K in keyof TModel as TColumnsList extends 'all' ? K : Extract<K, TColumnsList[number]>]:
-			| TModel[K]
-			| SQL
-			| Placeholder;
-	}
+	& NestEmbedded<
+		{
+			[K in keyof TModel as TColumnsList extends 'all' ? K : Extract<K, TColumnsList[number]>]:
+				| TModel[K]
+				| SQL
+				| Placeholder;
+		}
+	>
 	& {};
 
 export type PgInsertSelection<
 	TTable extends PgTable<TableConfig>,
 	OverrideT extends boolean = false,
 	TColumnsList extends string[] | 'all' = 'all',
-	TModel extends Record<string, unknown> = InferInsertModel<TTable, { override: OverrideT }>,
+	TModel extends Record<string, unknown> = InferModelFromColumns<
+		TTable['_']['columns'],
+		'insert',
+		{ override: OverrideT }
+	>,
 > =
 	& {
 		[K in keyof TModel as TColumnsList extends 'all' ? K : Extract<K, TColumnsList[number]>]:
@@ -76,8 +83,8 @@ export type ValidateInsertSelectionKey<
 	TSelection extends PgInsertSelection<any, any>,
 	OverrideT extends boolean,
 	K extends keyof TSelection,
-> = K extends keyof InferInsertModel<TTable, { override: OverrideT }> ? TSelection[K]
-	: K extends keyof InferInsertModel<TTable, { override: true }> ? DrizzleTypeError<
+> = K extends keyof InferModelFromColumns<TTable['_']['columns'], 'insert', { override: OverrideT }> ? TSelection[K]
+	: K extends keyof InferModelFromColumns<TTable['_']['columns'], 'insert', { override: true }> ? DrizzleTypeError<
 			`Column "${
 				& K
 				& string}" in table "${TTable['_'][
@@ -147,6 +154,7 @@ export class PgInsertBuilder<
 		if (values.length === 0) {
 			throw new Error('values() must be called with at least one value');
 		}
+		values = values.map((value) => flattenEmbeddedValues(this.table, value)) as typeof values;
 
 		const builder = new this.builder(
 			this.table,
@@ -429,7 +437,7 @@ export class PgInsertBase<
 		fields: TSelectedFields,
 	): PgInsertReturning<this, TDynamic, TSelectedFields>;
 	returning(
-		fields: SelectedFieldsFlat = this.config.table[Table.Symbol.Columns],
+		fields: SelectedFieldsFlat = getTableShape(this.config.table) as SelectedFieldsFlat,
 	): PgInsertReturningAll<this, TDynamic> | PgInsertReturning<this, TDynamic, SelectedFieldsFlat> {
 		this.config.returningFields = fields;
 		this.config.returning = orderSelectedFields<PgColumn>(

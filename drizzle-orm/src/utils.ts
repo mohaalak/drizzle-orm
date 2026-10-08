@@ -3,6 +3,7 @@ import type { Cache } from './cache/core/cache.ts';
 import type { CodecsCollection } from './codecs.ts';
 import type { AnyColumn } from './column.ts';
 import { Column } from './column.ts';
+import { flattenEmbeddedValues, getTableShape } from './embed.ts';
 import { is } from './entity.ts';
 import type { Logger } from './logger.ts';
 import type { SelectedFieldsFlat, SelectedFieldsOrdered } from './operations.ts';
@@ -476,7 +477,7 @@ export function orderSelectedFields<TColumn extends AnyColumn>(
 					},
 			);
 		} else if (is(field, Table)) {
-			orderSelectedFields(field[Table.Symbol.Columns], newPath, codecs, result);
+			orderSelectedFields(getTableShape(field), newPath, codecs, result);
 		} else {
 			orderSelectedFields(field as Record<string, unknown>, newPath, codecs, result);
 		}
@@ -511,7 +512,7 @@ export function haveSameKeys(left: Record<string, unknown>, right: Record<string
 
 /** @internal */
 export function mapUpdateSet(table: Table, values: Record<string, unknown>): UpdateSet {
-	const entries = Object.entries(values).filter(([, value]) => value !== undefined);
+	const entries = Object.entries(flattenEmbeddedValues(table, values)).filter(([, value]) => value !== undefined);
 
 	if (entries.length === 0) {
 		throw new Error('No values to set');

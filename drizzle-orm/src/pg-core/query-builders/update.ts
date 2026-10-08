@@ -1,4 +1,5 @@
 import type { GetColumnData } from '~/column.ts';
+import { getTableShape, type NestEmbedded, type NestEmbeddedPartial } from '~/embed.ts';
 import { entityKind, is } from '~/entity.ts';
 import type { PgDialect } from '~/pg-core/dialect.ts';
 import type { PgQueryResultHKT, PgQueryResultKind, PgSession } from '~/pg-core/session.ts';
@@ -25,7 +26,7 @@ import {
 	type SQLWrapper,
 } from '~/sql/sql.ts';
 import { Subquery } from '~/subquery.ts';
-import { getTableName, type InferInsertModel, Table } from '~/table.ts';
+import { getTableName, type InferModelFromColumns, type Table } from '~/table.ts';
 import {
 	type Assume,
 	type Equal,
@@ -61,16 +62,18 @@ export interface PgUpdateConfig {
 
 export type PgUpdateSetSource<
 	TTable extends PgTable,
-	TModel extends Record<string, any> = InferInsertModel<TTable>,
+	TModel extends Record<string, any> = InferModelFromColumns<TTable['_']['columns'], 'insert'>,
 > =
-	& {
-		[Key in keyof TModel & string]?:
-			| GetColumnData<TTable['_']['columns'][Key]>
-			| SQL
-			| PgColumn
-			| Placeholder
-			| undefined;
-	}
+	& NestEmbeddedPartial<
+		{
+			[Key in keyof TModel & string]?:
+				| GetColumnData<TTable['_']['columns'][Key]>
+				| SQL
+				| PgColumn
+				| Placeholder
+				| undefined;
+		}
+	>
 	& {};
 
 export interface PgUpdateBuilderConstructor {
@@ -178,8 +181,8 @@ export type PgUpdateJoinFn<
 	on:
 		| (
 			(
-				updateTable: T['_']['table']['_']['columns'],
-				from: T['_']['from'] extends PgTable ? T['_']['from']['_']['columns']
+				updateTable: NestEmbedded<T['_']['table']['_']['columns']>,
+				from: T['_']['from'] extends PgTable ? NestEmbedded<T['_']['from']['_']['columns']>
 					: T['_']['from'] extends Subquery | PgViewBase ? T['_']['from']['_']['selectedFields']
 					: never,
 			) => SQL | undefined
@@ -232,7 +235,7 @@ type AccumulateToResult<
 			T['_']['table']['_']['name'],
 			TSelectedFields,
 			TJoin['name'],
-			TJoin['table'] extends Table ? TJoin['table']['_']['columns']
+			TJoin['table'] extends Table ? NestEmbedded<TJoin['table']['_']['columns']>
 				: TJoin['table'] extends Subquery ? Assume<TJoin['table']['_']['selectedFields'], SelectedFields>
 				: never,
 			TSelectMode extends 'partial' ? TSelectMode : 'multiple'
@@ -246,11 +249,12 @@ export type PgUpdateReturningAll<T extends AnyPgUpdate, TDynamic extends boolean
 			T['_']['table'],
 			T['_']['queryResult'],
 			T['_']['from'],
-			Equal<T['_']['joins'], []> extends true ? T['_']['table']['_']['columns'] : Simplify<
-				& Record<T['_']['table']['_']['name'], T['_']['table']['_']['columns']>
+			Equal<T['_']['joins'], []> extends true ? NestEmbedded<T['_']['table']['_']['columns']> : Simplify<
+				& Record<T['_']['table']['_']['name'], NestEmbedded<T['_']['table']['_']['columns']>>
 				& {
-					[K in keyof T['_']['joins'] as T['_']['joins'][K]['table']['_']['name']]:
-						T['_']['joins'][K]['table']['_']['columns'];
+					[K in keyof T['_']['joins'] as T['_']['joins'][K]['table']['_']['name']]: NestEmbedded<
+						T['_']['joins'][K]['table']['_']['columns']
+					>;
 				}
 			>,
 			SelectResult<
@@ -478,7 +482,7 @@ export class PgUpdateBase<
 
 	private getTableLikeFields(table: PgTable | Subquery | PgViewBase): Record<string, unknown> {
 		if (is(table, PgTable)) {
-			return table[Table.Symbol.Columns];
+			return getTableShape(table);
 		} else if (is(table, Subquery)) {
 			return table._.selectedFields;
 		}
@@ -506,7 +510,7 @@ export class PgUpdateBase<
 					: undefined;
 				on = on(
 					new Proxy(
-						this.config.table[Table.Symbol.Columns],
+						getTableShape(this.config.table),
 						new SelectionProxyHandler({ sqlAliasedBehavior: 'sql', sqlBehavior: 'sql' }),
 					) as any,
 					from && new Proxy(
@@ -625,7 +629,7 @@ export class PgUpdateBase<
 		fields?: SelectedFields,
 	): PgUpdateReturningAll<this, TDynamic> | PgUpdateReturning<this, TDynamic, SelectedFields> {
 		if (!fields) {
-			fields = Object.assign({}, this.config.table[Table.Symbol.Columns]);
+			fields = Object.assign({}, getTableShape(this.config.table)) as SelectedFields;
 
 			if (this.config.from) {
 				const tableName = getTableLikeName(this.config.from);
