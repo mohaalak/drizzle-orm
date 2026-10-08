@@ -1,6 +1,7 @@
 import type { ColumnBuilderBase } from './column-builder.ts';
 import type { Column } from './column.ts';
 import { entityKind, is } from './entity.ts';
+import type { BuildRelationalQueryResult, RelationalRowsMapperGenerator } from './relations.ts';
 import { Table } from './table.ts';
 import type { Simplify } from './utils.ts';
 
@@ -189,6 +190,76 @@ export function flattenEmbeddedValues(table: Table, value: Record<string, unknow
 	return result;
 }
 
+interface EmbeddedRowsPlan {
+	/** Columns selected under a dotted key, as the path to nest each one at. */
+	readonly columns: readonly (readonly [key: string, path: readonly string[]])[];
+	/** Loaded relations whose rows carry embedded columns of their own. */
+	readonly relations: readonly (readonly [key: string, plan: EmbeddedRowsPlan])[];
+}
+
+/** Finds the embedded columns a relational selection reads, or `undefined` when it reads none. */
+function embeddedRowsPlan(selection: BuildRelationalQueryResult['selection']): EmbeddedRowsPlan | undefined {
+	const columns: [string, string[]][] = [];
+	const relations: [string, EmbeddedRowsPlan][] = [];
+	for (const item of selection) {
+		if (item.selection) {
+			const plan = embeddedRowsPlan(item.selection);
+			if (plan) relations.push([item.key, plan]);
+		} else if (item.fieldType === 'Column' && item.key.includes(EmbeddedKeySeparator)) {
+			columns.push([item.key, item.key.split(EmbeddedKeySeparator)]);
+		}
+	}
+
+	return columns.length || relations.length ? { columns, relations } : undefined;
+}
+
+function nestEmbeddedRows(value: unknown, plan: EmbeddedRowsPlan): void {
+	if (Array.isArray(value)) {
+		for (const row of value) nestEmbeddedRows(row, plan);
+		return;
+	}
+	if (typeof value !== 'object' || value === null) return;
+
+	const row = value as Record<string, unknown>;
+	for (const [key, path] of plan.columns) {
+		let target = row;
+		for (const segment of path.slice(0, -1)) {
+			target = (target[segment] ??= {}) as Record<string, unknown>;
+		}
+		target[path.at(-1)!] = row[key];
+		delete row[key];
+	}
+	for (const [key, relationPlan] of plan.relations) {
+		nestEmbeddedRows(row[key], relationPlan);
+	}
+}
+
+/**
+ * Wraps a relational rows mapper so the columns of `embed()` groups, which a relational query
+ * selects under their dotted keys, come back nested: `'address.city'` → `address.city`. Leaves the
+ * mapper untouched for selections that read no embedded columns.
+ *
+ * @internal
+ */
+export function withNestedEmbeddedRows(generator: RelationalRowsMapperGenerator): RelationalRowsMapperGenerator {
+	return (config) => {
+		const mapper = generator(config);
+		const plan = embeddedRowsPlan(config.selection);
+		if (!plan) return mapper;
+
+		return (rows) => {
+			const result = mapper ? mapper(rows) : rows;
+			nestEmbeddedRows(result, plan);
+			return result;
+		};
+	};
+}
+
+/** @internal */
+export function hasEmbeddedRows(selection: BuildRelationalQueryResult['selection']): boolean {
+	return embeddedRowsPlan(selection) !== undefined;
+}
+
 // ----------------------------------------------------------------------------- types
 
 type DottedKey = `${string}${typeof EmbeddedKeySeparator}${string}`;
@@ -223,7 +294,8 @@ export type NestEmbedded<T> = [Extract<keyof T, DottedKey>] extends [never] ? T
  */
 export type NestEmbeddedPartial<T> =
 	& { [K in keyof T as K extends DottedKey ? never : K]?: T[K] }
-	& { [Head in GroupKeys<T>]?: NestEmbeddedPartial<GroupOf<T, Head>> };
+	// Writing `null` to a group clears every column in it.
+	& { [Head in GroupKeys<T>]?: NestEmbeddedPartial<GroupOf<T, Head>> | null };
 
 /**
  * Flattens a table definition's `embed()` groups into dotted keys, mirroring

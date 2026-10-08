@@ -1,6 +1,7 @@
 import { aliasedTable, getOriginalColumnFromAlias } from '~/alias.ts';
 import { CodecsCollection } from '~/codecs.ts';
 import { Column } from '~/column.ts';
+import { withNestedEmbeddedRows } from '~/embed.ts';
 import { entityKind, is } from '~/entity.ts';
 import { DrizzleError } from '~/errors.ts';
 import { PgColumn, type PgCustomColumn } from '~/pg-core/columns/index.ts';
@@ -98,11 +99,11 @@ export class PgDialect {
 		this.mapperGenerators = config?.useJitMappers
 			? {
 				rows: makeJitQueryMapper,
-				relationalRows: makeJitRqbMapper,
+				relationalRows: withNestedEmbeddedRows(makeJitRqbMapper),
 			}
 			: {
 				rows: makeDefaultQueryMapper,
-				relationalRows: makeDefaultRqbMapper,
+				relationalRows: withNestedEmbeddedRows(makeDefaultRqbMapper),
 			};
 	}
 
