@@ -1,7 +1,7 @@
 import type { ColumnBuilderBase } from './column-builder.ts';
 import type { Column } from './column.ts';
 import { entityKind, is } from './entity.ts';
-import type { BuildRelationalQueryResult, RelationalRowsMapperGenerator } from './relations.ts';
+import type { BuildRelationalQueryResult, RelationalRowsMapper } from './relations.ts';
 import { Table } from './table.ts';
 import type { Simplify } from './utils.ts';
 
@@ -236,23 +236,23 @@ function nestEmbeddedRows(value: unknown, plan: EmbeddedRowsPlan): void {
 
 /**
  * Wraps a relational rows mapper so the columns of `embed()` groups, which a relational query
- * selects under their dotted keys, come back nested: `'address.city'` → `address.city`. Leaves the
- * mapper untouched for selections that read no embedded columns.
+ * selects under their dotted keys, come back nested: `'address.city'` → `address.city`. Returns
+ * the mapper untouched for selections that read no embedded columns.
  *
  * @internal
  */
-export function withNestedEmbeddedRows(generator: RelationalRowsMapperGenerator): RelationalRowsMapperGenerator {
-	return (config) => {
-		const mapper = generator(config);
-		const plan = embeddedRowsPlan(config.selection);
-		if (!plan) return mapper;
+export function nestEmbeddedRelationalRows<TMapper extends RelationalRowsMapper | undefined>(
+	mapper: TMapper,
+	selection: BuildRelationalQueryResult['selection'],
+): TMapper {
+	const plan = embeddedRowsPlan(selection);
+	if (!plan) return mapper;
 
-		return (rows) => {
-			const result = mapper ? mapper(rows) : rows;
-			nestEmbeddedRows(result, plan);
-			return result;
-		};
-	};
+	return ((rows: Parameters<RelationalRowsMapper>[0]) => {
+		const result = mapper ? mapper(rows) : rows;
+		nestEmbeddedRows(result, plan);
+		return result;
+	}) as TMapper;
 }
 
 /** @internal */

@@ -1,4 +1,4 @@
-import { hasEmbeddedRows } from '~/embed.ts';
+import { hasEmbeddedRows, nestEmbeddedRelationalRows } from '~/embed.ts';
 import { entityKind } from '~/entity.ts';
 import { QueryPromise } from '~/query-promise.ts';
 import type { RunnableQuery } from '~/runnable-query.ts';
@@ -38,14 +38,17 @@ export class PgAsyncRelationalQuery<TResult> extends PgRelationalQuery<PgAsyncRe
 
 			const mapper = this.mapper ??= shape
 				? (isFirst ? (rows: any[]) => rows[0] : undefined)
-				: dialect.mapperGenerators.relationalRows({
-					isFirst,
-					parseJson: this.parseJson,
-					parseJsonIfString: false,
-					rootJsonMappers: false,
-					selection: query.selection,
-					arrayModeRoot: true,
-				});
+				: nestEmbeddedRelationalRows(
+					dialect.mapperGenerators.relationalRows({
+						isFirst,
+						parseJson: this.parseJson,
+						parseJsonIfString: false,
+						rootJsonMappers: false,
+						selection: query.selection,
+						arrayModeRoot: true,
+					}),
+					query.selection,
+				);
 
 			return this.session.prepareQuery<PreparedQueryConfig & { execute: TResult }>(
 				builtQuery,
