@@ -13,7 +13,7 @@ import { type InferModelFromColumns, Table } from '~/table.ts';
 import { type Assume, type DrizzleTypeError, mapUpdateSet, orderSelectedFields } from '~/utils.ts';
 import type { AnySQLiteColumn, SQLiteColumn } from '../columns/common.ts';
 import { QueryBuilder } from './query-builder.ts';
-import type { SelectedFieldsFlat, SelectedFieldsOrdered } from './select.types.ts';
+import type { SelectedFields, SelectedFieldsOrdered } from './select.types.ts';
 import type { SQLiteUpdateSetSource } from './update.ts';
 
 export interface SQLiteInsertConfig<TTable extends SQLiteTable = SQLiteTable> {
@@ -259,7 +259,7 @@ export type SQLiteInsertWithout<T extends AnySQLiteInsert, TDynamic extends bool
 export type SQLiteInsertReturning<
 	T extends AnySQLiteInsert,
 	TDynamic extends boolean,
-	TSelectedFields extends SelectedFieldsFlat,
+	TSelectedFields extends SelectedFields,
 > = SQLiteInsertWithout<
 	SQLiteInsertKind<
 		T['_']['hkt'],
@@ -423,11 +423,11 @@ export class SQLiteInsertBase<
 	 * ```
 	 */
 	returning(): SQLiteInsertReturningAll<this, TDynamic>;
-	returning<TSelectedFields extends SelectedFieldsFlat>(
+	returning<TSelectedFields extends SelectedFields>(
 		fields: TSelectedFields,
 	): SQLiteInsertReturning<this, TDynamic, TSelectedFields>;
 	returning(
-		fields: SelectedFieldsFlat = getTableShape(this.config.table) as SelectedFieldsFlat,
+		fields: SelectedFields = getTableShape(this.config.table) as SelectedFields,
 	): SQLiteInsertWithout<AnySQLiteInsert, TDynamic, 'returning'> {
 		this.config.returning = orderSelectedFields<SQLiteColumn>(fields, undefined, this.dialect.codecs);
 		return this as any;

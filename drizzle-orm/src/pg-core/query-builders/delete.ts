@@ -11,7 +11,7 @@ import type { Subquery } from '~/subquery.ts';
 import { getTableName } from '~/table.ts';
 import { type Assume, orderSelectedFields } from '~/utils.ts';
 import type { PgColumn } from '../columns/common.ts';
-import type { SelectedFieldsFlat, SelectedFieldsOrdered } from './select.types.ts';
+import type { SelectedFields, SelectedFieldsOrdered } from './select.types.ts';
 
 export type PgDeleteWithout<
 	T extends AnyPgDelete,
@@ -41,7 +41,7 @@ export type PgDelete<
 export interface PgDeleteConfig {
 	where?: SQL | undefined;
 	table: PgTable;
-	returningFields?: SelectedFieldsFlat;
+	returningFields?: SelectedFields;
 	returning?: SelectedFieldsOrdered;
 	shape?: any;
 	withList?: Subquery[];
@@ -70,7 +70,7 @@ export type PgDeleteReturningAll<
 export type PgDeleteReturning<
 	T extends AnyPgDelete,
 	TDynamic extends boolean,
-	TSelectedFields extends SelectedFieldsFlat,
+	TSelectedFields extends SelectedFields,
 > = T extends any ? PgDeleteWithout<
 		PgDeleteKind<
 			T['_']['hkt'],
@@ -253,11 +253,11 @@ export class PgDeleteBase<
 	 * ```
 	 */
 	returning(): PgDeleteReturningAll<this, TDynamic>;
-	returning<TSelectedFields extends SelectedFieldsFlat>(
+	returning<TSelectedFields extends SelectedFields>(
 		fields: TSelectedFields,
 	): PgDeleteReturning<this, TDynamic, TSelectedFields>;
 	returning(
-		fields: SelectedFieldsFlat = getTableShape(this.config.table) as SelectedFieldsFlat,
+		fields: SelectedFields = getTableShape(this.config.table) as SelectedFields,
 	): PgDeleteReturning<this, TDynamic, any> | PgDeleteReturningAll<this, TDynamic> {
 		this.config.returningFields = fields;
 		this.config.returning = orderSelectedFields<PgColumn>(

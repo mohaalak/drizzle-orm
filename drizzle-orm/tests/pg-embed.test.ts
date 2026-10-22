@@ -179,6 +179,16 @@ describe('embed', () => {
 		const rows = await db.select({ city: sq.user.address.city, lat: sq.user.address.geo.lat }).from(sq);
 		expect(rows).toStrictEqual([{ city: 'Lyon', lat: 4 }]);
 	});
+
+	test('insert and delete return whole groups', async () => {
+		const [inserted] = await db.insert(users).values({ name: 'Ret', address: { city: 'Rome' } }).returning({
+			address: users.address,
+		});
+		expect(inserted).toStrictEqual({ address: { street: null, city: 'Rome', geo: { lat: null, lng: null } } });
+
+		const deleted = await db.delete(users).where(eq(users.name, 'Ret')).returning({ geo: users.address.geo });
+		expect(deleted).toStrictEqual([{ geo: { lat: null, lng: null } }]);
+	});
 });
 
 const shops = pgTable('shops', {

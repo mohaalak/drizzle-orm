@@ -15,7 +15,7 @@ import { getTableName, Table } from '~/table.ts';
 import { type Assume, type DrizzleTypeError, mapUpdateSet, orderSelectedFields } from '~/utils.ts';
 import type { AnyPgColumn, PgColumn } from '../columns/common.ts';
 import { QueryBuilder } from './query-builder.ts';
-import type { SelectedFieldsFlat, SelectedFieldsOrdered } from './select.types.ts';
+import type { SelectedFields, SelectedFieldsOrdered } from './select.types.ts';
 import type { PgUpdateSetSource } from './update.ts';
 
 export interface PgInsertConfig<TTable extends PgTable = PgTable> {
@@ -23,7 +23,7 @@ export interface PgInsertConfig<TTable extends PgTable = PgTable> {
 	values: Record<string, unknown>[] | TypedQueryBuilder<PgInsertSelection<TTable>> | SQL;
 	withList?: Subquery[];
 	onConflict?: SQL;
-	returningFields?: SelectedFieldsFlat;
+	returningFields?: SelectedFields;
 	returning?: SelectedFieldsOrdered;
 	shape?: any;
 	select?: boolean;
@@ -292,7 +292,7 @@ export type PgInsertWithout<T extends AnyPgInsert, TDynamic extends boolean, K e
 export type PgInsertReturning<
 	T extends AnyPgInsert,
 	TDynamic extends boolean,
-	TSelectedFields extends SelectedFieldsFlat,
+	TSelectedFields extends SelectedFields,
 > = T extends any ? PgInsertWithout<
 		PgInsertKind<
 			T['_']['hkt'],
@@ -439,12 +439,12 @@ export class PgInsertBase<
 	 * ```
 	 */
 	returning(): PgInsertReturningAll<this, TDynamic>;
-	returning<TSelectedFields extends SelectedFieldsFlat>(
+	returning<TSelectedFields extends SelectedFields>(
 		fields: TSelectedFields,
 	): PgInsertReturning<this, TDynamic, TSelectedFields>;
 	returning(
-		fields: SelectedFieldsFlat = getTableShape(this.config.table) as SelectedFieldsFlat,
-	): PgInsertReturningAll<this, TDynamic> | PgInsertReturning<this, TDynamic, SelectedFieldsFlat> {
+		fields: SelectedFields = getTableShape(this.config.table) as SelectedFields,
+	): PgInsertReturningAll<this, TDynamic> | PgInsertReturning<this, TDynamic, SelectedFields> {
 		this.config.returningFields = fields;
 		this.config.returning = orderSelectedFields<PgColumn>(
 			this.config.returningFields,

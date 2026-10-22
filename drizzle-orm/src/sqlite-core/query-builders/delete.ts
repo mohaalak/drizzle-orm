@@ -9,7 +9,7 @@ import type { SQLiteTable } from '~/sqlite-core/table.ts';
 import type { Subquery } from '~/subquery.ts';
 import { type Assume, orderSelectedFields, type ValueOrArray } from '~/utils.ts';
 import type { SQLiteColumn } from '../columns/common.ts';
-import type { SelectedFieldsFlat, SelectedFieldsOrdered } from './select.types.ts';
+import type { SelectedFields, SelectedFieldsOrdered } from './select.types.ts';
 
 export interface SQLiteDeleteConfig {
 	where?: SQL | undefined;
@@ -101,7 +101,7 @@ export type SQLiteDeleteReturningAll<
 export type SQLiteDeleteReturning<
 	T extends AnySQLiteDeleteBase,
 	TDynamic extends boolean,
-	TSelectedFields extends SelectedFieldsFlat,
+	TSelectedFields extends SelectedFields,
 > = SQLiteDeleteWithout<
 	SQLiteDeleteKind<
 		T['_']['hkt'],
@@ -261,11 +261,11 @@ export class SQLiteDeleteBase<
 	 * ```
 	 */
 	returning(): SQLiteDeleteReturningAll<this, TDynamic>;
-	returning<TSelectedFields extends SelectedFieldsFlat>(
+	returning<TSelectedFields extends SelectedFields>(
 		fields: TSelectedFields,
 	): SQLiteDeleteReturning<this, TDynamic, TSelectedFields>;
 	returning(
-		fields: SelectedFieldsFlat = getTableShape(this.table) as SelectedFieldsFlat,
+		fields: SelectedFields = getTableShape(this.table) as SelectedFields,
 	): SQLiteDeleteReturning<this, TDynamic, any> | SQLiteDeleteReturningAll<this, TDynamic> {
 		this.config.returning = orderSelectedFields<SQLiteColumn>(fields, undefined, this.dialect.codecs);
 		return this as any;

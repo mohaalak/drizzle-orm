@@ -113,12 +113,12 @@ describe.skipIf(!connectionString)('embed', () => {
 	});
 
 	test('insert takes nested values, and select returns nested rows', async () => {
-		const [{ id }] = await db.insert(users).values({
+		const [inserted] = await db.insert(users).values({
 			name: 'Ada',
 			address: { street: 'Main St', city: 'Berlin', geo: { lat: 52, lng: 13 } },
 			billing: { zip: '10115' },
 		}).$returningId();
-		expect(id).toBe(1);
+		expect(inserted).toStrictEqual({ id: 1 });
 
 		await db.insert(users).values({ name: 'Bob', address: { city: 'Paris' } });
 
@@ -253,11 +253,12 @@ describe.skipIf(!connectionString).each([
 	{ jit: true },
 ])('embed in relational queries (jit: $jit)', ({ jit }) => {
 	let pool: Pool;
-	let rqb: ReturnType<typeof drizzle<{}, Pool, typeof relations>>;
+	const connect = (client: Pool) => drizzle({ client, relations, jit });
+	let rqb: ReturnType<typeof connect>;
 
 	beforeAll(async () => {
 		pool = createPool({ uri: connectionString! });
-		rqb = drizzle({ client: pool, relations, jit });
+		rqb = connect(pool);
 
 		await rqb.execute(sql`drop table if exists embed_orders`);
 		await rqb.execute(sql`drop table if exists embed_shops`);
@@ -303,7 +304,7 @@ describe.skipIf(!connectionString).each([
 });
 
 describe.skipIf(!connectionString)('embed in the effect driver', () => {
-	const run = <A, E>(effect: Effect.Effect<A, E, MysqlClient>) =>
+	const run = <A, E>(effect: Effect.Effect<A, E, MysqlClient.MysqlClient>) =>
 		Effect.runPromise(
 			effect.pipe(
 				Effect.scoped,

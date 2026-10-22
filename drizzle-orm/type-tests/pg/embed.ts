@@ -83,3 +83,14 @@ Expect<
 	const rows = await db.select().from(other).leftJoin(users, eq(other.userId, users.id));
 	Expect<Equal<typeof rows, { other_embed: { id: number; userId: number | null }; users_embed: User | null }[]>>();
 }
+
+// Insert and delete `returning` take whole groups, as update `returning` does.
+{
+	const inserted = await db.insert(users).values({ name: 'n', address: { city: 'c' } }).returning({
+		address: users.address,
+	});
+	Expect<Equal<typeof inserted, { address: Address }[]>>();
+
+	const deleted = await db.delete(users).returning({ geo: users.address.geo });
+	Expect<Equal<typeof deleted, { geo: Address['geo'] }[]>>();
+}

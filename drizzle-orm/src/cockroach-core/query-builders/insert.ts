@@ -24,7 +24,7 @@ import { tracer } from '~/tracing.ts';
 import { type DrizzleTypeError, mapUpdateSet, orderSelectedFields } from '~/utils.ts';
 import type { AnyCockroachColumn, CockroachColumn } from '../columns/common.ts';
 import { QueryBuilder } from './query-builder.ts';
-import type { SelectedFieldsFlat, SelectedFieldsOrdered } from './select.types.ts';
+import type { SelectedFields, SelectedFieldsOrdered } from './select.types.ts';
 import type { CockroachUpdateSetSource } from './update.ts';
 
 export interface CockroachInsertConfig<TTable extends CockroachTable = CockroachTable> {
@@ -33,7 +33,7 @@ export interface CockroachInsertConfig<TTable extends CockroachTable = Cockroach
 	values: Record<string, unknown>[] | TypedQueryBuilder<CockroachInsertSelection<TTable>> | SQL;
 	withList?: Subquery[];
 	onConflict?: SQL;
-	returningFields?: SelectedFieldsFlat;
+	returningFields?: SelectedFields;
 	returning?: SelectedFieldsOrdered;
 	select?: boolean;
 	columnList?: string[];
@@ -216,7 +216,7 @@ export type CockroachInsertWithout<
 export type CockroachInsertReturning<
 	T extends AnyCockroachInsert,
 	TDynamic extends boolean,
-	TSelectedFields extends SelectedFieldsFlat,
+	TSelectedFields extends SelectedFields,
 > = CockroachInsertBase<
 	T['_']['table'],
 	T['_']['queryResult'],
@@ -357,11 +357,11 @@ export class CockroachInsertBase<
 	 * ```
 	 */
 	returning(): CockroachInsertWithout<CockroachInsertReturningAll<this, TDynamic>, TDynamic, 'returning'>;
-	returning<TSelectedFields extends SelectedFieldsFlat>(
+	returning<TSelectedFields extends SelectedFields>(
 		fields: TSelectedFields,
 	): CockroachInsertWithout<CockroachInsertReturning<this, TDynamic, TSelectedFields>, TDynamic, 'returning'>;
 	returning(
-		fields: SelectedFieldsFlat = getTableShape(this.config.table) as SelectedFieldsFlat,
+		fields: SelectedFields = getTableShape(this.config.table) as SelectedFields,
 	): CockroachInsertWithout<AnyCockroachInsert, TDynamic, 'returning'> {
 		this.config.returningFields = fields;
 		this.config.returning = orderSelectedFields<CockroachColumn>(
