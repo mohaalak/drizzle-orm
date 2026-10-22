@@ -1,4 +1,5 @@
 import {
+	expandInsertColumnList,
 	flattenEmbeddedValues,
 	flattenSelectedFields,
 	type InsertSelectionShape,
@@ -123,7 +124,9 @@ export class MySqlInsertBuilder<
 		private dialect: MySqlDialect,
 		private columnList?: string[],
 		private builder: MySqlInsertBuilderConstructor = MySqlInsertBase as unknown as MySqlInsertBuilderConstructor,
-	) {}
+	) {
+		if (columnList) this.columnList = expandInsertColumnList(table, columnList);
+	}
 
 	ignore(): this {
 		this.shouldIgnore = true;

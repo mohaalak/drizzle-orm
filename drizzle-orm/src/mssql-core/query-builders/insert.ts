@@ -1,4 +1,5 @@
 import {
+	expandInsertColumnList,
 	flattenEmbeddedValues,
 	flattenSelectedFields,
 	getTableShape,
@@ -129,7 +130,7 @@ export class MsSqlInsertBuilder<
 		this.session = session;
 		this.dialect = dialect;
 
-		this.config = { table, output, columnList };
+		this.config = { table, output, columnList: columnList && expandInsertColumnList(table, columnList) };
 	}
 
 	values(

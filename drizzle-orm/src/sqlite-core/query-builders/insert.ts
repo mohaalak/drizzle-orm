@@ -1,4 +1,5 @@
 import {
+	expandInsertColumnList,
 	flattenEmbeddedValues,
 	flattenSelectedFields,
 	getTableShape,
@@ -122,7 +123,9 @@ export class SQLiteInsertBuilder<
 		private withList?: Subquery[],
 		private columnList?: string[],
 		private builder: SQLiteInsertBuilderConstructor = SQLiteInsertBase,
-	) {}
+	) {
+		if (columnList) this.columnList = expandInsertColumnList(table, columnList);
+	}
 
 	values(value: SQLiteInsertValue<TTable, TColumnList>): SQLiteInsertKind<THKT, TTable, TRunResult>;
 	values(values: SQLiteInsertValue<TTable, TColumnList>[]): SQLiteInsertKind<THKT, TTable, TRunResult>;

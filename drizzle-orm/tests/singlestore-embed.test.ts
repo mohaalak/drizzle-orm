@@ -163,6 +163,60 @@ describe('embed (no database)', () => {
 			'insert into `embed_plain` (`id`, `cityId`) values (default, ?)',
 		);
 	});
+
+	test('a column list can name an embed() group', () => {
+		expect(
+			db.insert(users, 'name', 'address').values({
+				name: 'Ada',
+				address: { city: 'Berlin', geo: { lat: 1 } },
+			}).toSQL(),
+		).toEqual({
+			sql:
+				'insert into `embed_users` (`name`, `address_street`, `address_city`, `address_geo_lat`, `address_geo_lng`) values (?, default, ?, ?, default)',
+			params: ['Ada', 'Berlin', 1],
+		});
+
+		expect(
+			db.insert(users, 'name', 'address.city', 'address.geo').values({
+				name: 'Ada',
+				address: { city: 'Berlin', geo: { lat: 1 } },
+			}).toSQL(),
+		).toEqual({
+			sql:
+				'insert into `embed_users` (`name`, `address_city`, `address_geo_lat`, `address_geo_lng`) values (?, ?, ?, default)',
+			params: ['Ada', 'Berlin', 1],
+		});
+
+		expect(
+			db.insert(users, 'name', 'address.city', 'billing').values({
+				name: 'Ada',
+				address: { city: 'Berlin' },
+				billing: { zip: '10115' },
+			}).toSQL(),
+		).toEqual({
+			sql: 'insert into `embed_users` (`name`, `address_city`, `billing_zip_code`) values (?, ?, ?)',
+			params: ['Ada', 'Berlin', '10115'],
+		});
+
+		expect(db.insert(users, 'name', 'address.city').values({ name: 'Ada', address: { city: 'Berlin' } }).toSQL())
+			.toEqual({
+				sql: 'insert into `embed_users` (`name`, `address_city`) values (?, ?)',
+				params: ['Ada', 'Berlin'],
+			});
+
+		// @ts-expect-error - `address` repeats `address.city`
+		expect(() => db.insert(users, 'name', 'address', 'address.city')).toThrow(
+			'Duplicate columns are not allowed in insert selection: "address.city"',
+		);
+		// @ts-expect-error - `address` repeats `address.city`
+		expect(() => db.insert(users, 'name', 'address.city', 'address')).toThrow(
+			'Duplicate columns are not allowed in insert selection: "address"',
+		);
+		// @ts-expect-error - not a column or an embed() group
+		expect(() => db.insert(users, 'name', 'address', 'nope')).toThrow(
+			'Column "nope" does not exist in table "embed_users"',
+		);
+	});
 });
 
 async function connect(): Promise<Connection> {
@@ -289,6 +343,22 @@ describe.skipIf(!connectionString)('embed', () => {
 	test('tables without groups are unaffected', async () => {
 		await db.insert(plain).values({ cityId: 7 });
 		expect(await db.select().from(plain)).toEqual([{ id: 1, cityId: 7 }]);
+	});
+
+	test('insert writes a group named in the column list', async () => {
+		await db.insert(users, 'name', 'address').values({
+			name: 'ColList',
+			address: { city: 'Berlin', geo: { lat: 1 } },
+		});
+
+		expect(
+			await db.select({ name: users.name, address: users.address }).from(users).where(eq(users.name, 'ColList')),
+		).toEqual([{
+			name: 'ColList',
+			address: { street: null, city: 'Berlin', geo: { lat: 1, lng: null } },
+		}]);
+
+		await db.delete(users).where(eq(users.name, 'ColList'));
 	});
 });
 

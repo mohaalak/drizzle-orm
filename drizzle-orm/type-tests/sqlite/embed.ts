@@ -143,3 +143,65 @@ Expect<
 		qb.select({ name: src.name, address: { city: src.city, street: src.city } }).from(src),
 	);
 }
+
+// A column list can name an embed() group. The group stands for every column in it.
+{
+	const qb = new QueryBuilder();
+
+	db.insert(users, 'name', 'address').values({ name: 'Ada', address: { city: 'Berlin', geo: { lat: 1 } } });
+	db.insert(users, 'name', 'address.city', 'address.geo').values({
+		name: 'Ada',
+		address: { city: 'Berlin', geo: { lat: 1 } },
+	});
+	db.insert(users, 'name', 'address.city', 'note').values({
+		name: 'Ada',
+		address: { city: 'Berlin' },
+		note: { body: 'hi' },
+	});
+
+	// @ts-expect-error - missing required column "address.city"
+	db.insert(users, 'name', 'address.street');
+	// @ts-expect-error - missing required column "address.city"
+	db.insert(users, 'name', 'address.geo');
+	// @ts-expect-error - `address` repeats `address.city`
+	db.insert(users, 'name', 'address', 'address.city');
+	// @ts-expect-error - `address` repeats `address.geo`
+	db.insert(users, 'name', 'address', 'address.geo');
+	// @ts-expect-error - not a column or an embed() group
+	db.insert(users, 'name', 'address', 'nope');
+
+	// @ts-expect-error - `city` is required in the group
+	db.insert(users, 'name', 'address').values({ name: 'Ada', address: { street: 'Main' } });
+	// @ts-expect-error - `note` is not included in the column selection
+	db.insert(users, 'name', 'address').values({ name: 'Ada', address: { city: 'Berlin' }, note: { body: 'x' } });
+	// @ts-expect-error - `street` is not included in the column selection
+	db.insert(users, 'name', 'address.city', 'address.geo').values({
+		name: 'Ada',
+		address: { city: 'Berlin', street: 'Main', geo: { lat: 1 } },
+	});
+
+	db.insert(users, 'name', 'address').select(
+		qb.select({ name: users.name, address: { city: users.address.city, geo: { lat: users.address.geo.lat } } })
+			.from(users),
+	);
+	db.insert(users, 'name', 'address').select(
+		qb.select({ name: users.name, address: users.address }).from(users),
+	);
+	db.insert(users, 'name', 'address.city', 'address.geo').select(
+		qb.select({ name: users.name, address: { city: users.address.city, geo: { lat: users.address.geo.lat } } })
+			.from(users),
+	);
+	db.insert(users, 'name', 'address').select(
+		// @ts-expect-error - `note` is not included in the insert column selection
+		qb.select({ name: users.name, address: { city: users.address.city }, note: { body: users.note.body } }).from(
+			users,
+		),
+	);
+	db.insert(users, 'name', 'address.city', 'address.geo').select(
+		// @ts-expect-error - `address.street` is not included in the insert column selection
+		qb.select({
+			name: users.name,
+			address: { city: users.address.city, street: users.address.street },
+		}).from(users),
+	);
+}

@@ -264,6 +264,82 @@ describe('embed', () => {
 		await db.delete(users).where(eq(users.name, 'Dst'));
 		await db.execute(sql`drop table src_embed`);
 	});
+
+	test('a column list can name an embed() group', () => {
+		expect(
+			db.insert(users, 'name', 'address').values({
+				name: 'Ada',
+				address: { city: 'Berlin', geo: { lat: 1 } },
+			}).toSQL(),
+		).toEqual({
+			sql:
+				'insert into "users" ("name", "address_street", "address_city", "address_geo_lat", "address_geo_lng") values ($1, default, $2, $3, default)',
+			params: ['Ada', 'Berlin', 1],
+		});
+
+		expect(
+			db.insert(users, 'name', 'address.city', 'address.geo').values({
+				name: 'Ada',
+				address: { city: 'Berlin', geo: { lat: 1 } },
+			}).toSQL(),
+		).toEqual({
+			sql:
+				'insert into "users" ("name", "address_city", "address_geo_lat", "address_geo_lng") values ($1, $2, $3, default)',
+			params: ['Ada', 'Berlin', 1],
+		});
+
+		expect(
+			db.insert(users, 'name', 'address.city', 'billing').values({
+				name: 'Ada',
+				address: { city: 'Berlin' },
+				billing: { zip: '10115' },
+			}).toSQL(),
+		).toEqual({
+			sql: 'insert into "users" ("name", "address_city", "billing_zip_code") values ($1, $2, $3)',
+			params: ['Ada', 'Berlin', '10115'],
+		});
+
+		expect(db.insert(users, 'name', 'address.city').values({ name: 'Ada', address: { city: 'Berlin' } }).toSQL())
+			.toEqual({
+				sql: 'insert into "users" ("name", "address_city") values ($1, $2)',
+				params: ['Ada', 'Berlin'],
+			});
+
+		expect(
+			db.insert(users, 'name', 'address').select(
+				db.select({ name: src.name, address: { city: src.city } }).from(src),
+			).toSQL().sql,
+		).toBe('insert into "users" ("name", "address_city") select "name", "city" from "src_embed"');
+
+		// @ts-expect-error - `address` repeats `address.city`
+		expect(() => db.insert(users, 'name', 'address', 'address.city')).toThrow(
+			'Duplicate columns are not allowed in insert selection: "address.city"',
+		);
+		// @ts-expect-error - `address` repeats `address.city`
+		expect(() => db.insert(users, 'name', 'address.city', 'address')).toThrow(
+			'Duplicate columns are not allowed in insert selection: "address"',
+		);
+		// @ts-expect-error - not a column or an embed() group
+		expect(() => db.insert(users, 'name', 'address', 'nope')).toThrow(
+			'Column "nope" does not exist in table "users"',
+		);
+	});
+
+	test('insert writes a group named in the column list', async () => {
+		await db.insert(users, 'name', 'address').values({
+			name: 'ColList',
+			address: { city: 'Berlin', geo: { lat: 1 } },
+		});
+
+		expect(
+			await db.select({ name: users.name, address: users.address }).from(users).where(eq(users.name, 'ColList')),
+		).toEqual([{
+			name: 'ColList',
+			address: { street: null, city: 'Berlin', geo: { lat: 1, lng: null } },
+		}]);
+
+		await db.delete(users).where(eq(users.name, 'ColList'));
+	});
 });
 
 const shops = pgTable('shops', {

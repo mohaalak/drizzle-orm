@@ -1,4 +1,4 @@
-import { flattenEmbeddedValues, type NestEmbedded } from '~/embed.ts';
+import { expandInsertColumnList, flattenEmbeddedValues, type NestEmbedded } from '~/embed.ts';
 import { entityKind, is } from '~/entity.ts';
 import { QueryPromise } from '~/query-promise.ts';
 import type { RunnableQuery } from '~/runnable-query.ts';
@@ -77,7 +77,9 @@ export class SingleStoreInsertBuilder<
 		private session: SingleStoreSession,
 		private dialect: SingleStoreDialect,
 		private columnList?: string[],
-	) {}
+	) {
+		if (columnList) this.columnList = expandInsertColumnList(table, columnList);
+	}
 
 	ignore(): this {
 		this.shouldIgnore = true;

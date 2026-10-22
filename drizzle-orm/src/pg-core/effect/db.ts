@@ -3,12 +3,13 @@ import type { SqlError } from 'effect/sql/SqlError';
 import type { EffectCacheShape } from '~/cache/core/cache-effect.ts';
 import type { MutationOption } from '~/cache/core/cache.ts';
 import type { QueryEffectHKTBase } from '~/effect-core/query-effect.ts';
+import type { InsertColumnListArg, InsertColumnListKey, ResolvedInsertColumnList } from '~/embed.ts';
 import { entityKind, is } from '~/entity.ts';
 import type { PgDialect } from '~/pg-core/dialect.ts';
 import { PgEffectCountBuilder } from '~/pg-core/effect/count.ts';
 import { PgEffectInsertBase, type PgEffectInsertHKT } from '~/pg-core/effect/insert.ts';
 import { PgEffectSelectBase, type PgEffectSelectBuilder } from '~/pg-core/effect/select.ts';
-import { type NoDuplicateColumns, PgInsertBuilder } from '~/pg-core/query-builders/insert.ts';
+import { PgInsertBuilder } from '~/pg-core/query-builders/insert.ts';
 import { RelationalQueryBuilder } from '~/pg-core/query-builders/query.ts';
 import { PgSelectBuilder } from '~/pg-core/query-builders/select.ts';
 import type { PgTable } from '~/pg-core/table.ts';
@@ -19,7 +20,6 @@ import { SelectionProxyHandler } from '~/selection-proxy.ts';
 import { type ColumnsSelection, type SQL, sql, type SQLWrapper } from '~/sql/sql.ts';
 import { WithSubquery } from '~/subquery.ts';
 import type { InferInsertColumns, RequiredInsertKeys } from '~/table.ts';
-import type { DrizzleTypeError, IsNever, JoinUnion } from '~/utils.ts';
 import type { PgColumn } from '../columns/common.ts';
 import { QueryBuilder } from '../query-builders/query-builder.ts';
 import type { SelectedFields } from '../query-builders/select.types.ts';
@@ -377,23 +377,15 @@ export class PgEffectDatabase<
 		 */
 		function insert<
 			TTable extends PgTable,
-			TColumnList extends (keyof InferInsertColumns<TTable, { override: true }>)[] = [],
+			TColumnList extends InsertColumnListKey<InferInsertColumns<TTable, { override: true }>>[] = [],
 			TRequiredKeys extends string = RequiredInsertKeys<TTable>,
 		>(
 			table: TTable,
-			...columns: TColumnList extends [] ? []
-				: IsNever<TRequiredKeys> extends true ? TColumnList & NoDuplicateColumns<TColumnList>
-				: [TRequiredKeys] extends [TColumnList[number]] ? TColumnList & NoDuplicateColumns<TColumnList>
-				: DrizzleTypeError<
-					`Column selection is missing following required columns: ${JoinUnion<
-						`"${Exclude<TRequiredKeys, TColumnList[number]>}"`,
-						', '
-					>}`
-				>[]
+			...columns: InsertColumnListArg<InferInsertColumns<TTable, { override: true }>, TColumnList, TRequiredKeys>
 		): PgInsertBuilder<
 			TTable,
 			TQueryResult,
-			TColumnList extends [] ? 'all' : TColumnList,
+			ResolvedInsertColumnList<InferInsertColumns<TTable, { override: true }>, TColumnList>,
 			false,
 			PgEffectInsertHKT<TEffectHKT>
 		>;
@@ -632,23 +624,15 @@ export class PgEffectDatabase<
 	 */
 	insert<
 		TTable extends PgTable,
-		TColumnList extends (keyof InferInsertColumns<TTable, { override: true }>)[] = [],
+		TColumnList extends InsertColumnListKey<InferInsertColumns<TTable, { override: true }>>[] = [],
 		TRequiredKeys extends string = RequiredInsertKeys<TTable>,
 	>(
 		table: TTable,
-		...columns: TColumnList extends [] ? []
-			: IsNever<TRequiredKeys> extends true ? TColumnList & NoDuplicateColumns<TColumnList>
-			: [TRequiredKeys] extends [TColumnList[number]] ? TColumnList & NoDuplicateColumns<TColumnList>
-			: DrizzleTypeError<
-				`Column selection is missing following required columns: ${JoinUnion<
-					`"${Exclude<TRequiredKeys, TColumnList[number]>}"`,
-					', '
-				>}`
-			>[]
+		...columns: InsertColumnListArg<InferInsertColumns<TTable, { override: true }>, TColumnList, TRequiredKeys>
 	): PgInsertBuilder<
 		TTable,
 		TQueryResult,
-		TColumnList extends [] ? 'all' : TColumnList,
+		ResolvedInsertColumnList<InferInsertColumns<TTable, { override: true }>, TColumnList>,
 		false,
 		PgEffectInsertHKT<TEffectHKT>
 	>;

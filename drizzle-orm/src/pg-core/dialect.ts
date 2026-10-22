@@ -1,7 +1,7 @@
 import { aliasedTable, aliasedTableSQL, getOriginalColumnFromAlias } from '~/alias.ts';
 import { CodecsCollection } from '~/codecs.ts';
 import { Column } from '~/column.ts';
-import { flattenSelectedFields } from '~/embed.ts';
+import { expandInsertColumnList, flattenSelectedFields } from '~/embed.ts';
 import { entityKind, is } from '~/entity.ts';
 import { DrizzleError } from '~/errors.ts';
 import { PgColumn } from '~/pg-core/columns/index.ts';
@@ -683,8 +683,9 @@ export class PgDialect {
 		useSelectionCastCodecs,
 	}: PgInsertConfig): SQL {
 		const columns: Record<string, PgColumn> = table[Table.Symbol.Columns];
-		const colEntries: [string, PgColumn][] = columnList
-			? columnList.map((name) => [name, columns[name]!])
+		const insertColumnList = columnList && expandInsertColumnList(table, columnList);
+		const colEntries: [string, PgColumn][] = insertColumnList
+			? insertColumnList.map((name) => [name, columns[name]!])
 			: Object.entries(columns);
 
 		const colFilteredEntries: [string, PgColumn][] = select && !is(valuesOrSelect, SQL)
