@@ -1,5 +1,6 @@
 import { z } from 'zod/v4';
 import { Column } from '~/column.ts';
+import { EmbeddedColumns, getTableShape } from '~/embed.ts';
 import { is } from '~/entity.ts';
 import type { PgEnum } from '~/pg-core/columns/enum.ts';
 import { SQL } from '~/sql/sql.ts';
@@ -28,8 +29,9 @@ function handleColumns(
 
 	for (const [key, selected] of Object.entries(columns)) {
 		if (!is(selected, Column) && !is(selected, SQL) && !is(selected, SQL.Aliased) && typeof selected === 'object') {
-			const columns = isTable(selected) || isView(selected) ? getColumns(selected) : selected;
-			columnSchemas[key] = handleColumns(columns, refinements[key] ?? {}, conditions, factory);
+			const columns = isTable(selected) ? getTableShape(selected) : isView(selected) ? getColumns(selected) : selected;
+			const nested = handleColumns(columns, refinements[key] ?? {}, conditions, factory);
+			columnSchemas[key] = is(selected, EmbeddedColumns) ? conditions.group(nested) : nested;
 			continue;
 		}
 
@@ -75,6 +77,7 @@ const selectConditions: Conditions = {
 	never: () => false,
 	optional: () => false,
 	nullable: (column) => !column.notNull,
+	group: (schema) => schema,
 };
 
 const insertConditions: Conditions = {
@@ -83,6 +86,11 @@ const insertConditions: Conditions = {
 		|| ('identity' in (column ?? {}) && typeof (column as any)?.identity !== 'undefined'),
 	optional: (column) => !column.notNull || (column.notNull && column.hasDefault),
 	nullable: (column) => !column.notNull,
+	// A group can be left out when every field in it can
+	group: (schema) =>
+		Object.values((schema as z.ZodObject).shape).every((field) => field.safeParse(undefined).success)
+			? schema.optional()
+			: schema,
 };
 
 const updateConditions: Conditions = {
@@ -91,6 +99,8 @@ const updateConditions: Conditions = {
 		|| ('identity' in (column ?? {}) && typeof (column as any)?.identity !== 'undefined'),
 	optional: () => true,
 	nullable: (column) => !column.notNull,
+	// Writing `null` to a group clears every column in it
+	group: (schema) => schema.nullable().optional(),
 };
 
 export const createSelectSchema: CreateSelectSchema<undefined> = (
@@ -100,7 +110,7 @@ export const createSelectSchema: CreateSelectSchema<undefined> = (
 	if (isWithEnum(entity)) {
 		return handleEnum(entity);
 	}
-	const columns = getColumns(entity);
+	const columns = isTable(entity) ? getTableShape(entity) : getColumns(entity);
 	return handleColumns(columns, refine ?? {}, selectConditions) as any;
 };
 
@@ -108,7 +118,7 @@ export const createInsertSchema: CreateInsertSchema<undefined> = (
 	entity: Table,
 	refine?: Record<string, any>,
 ) => {
-	const columns = getColumns(entity);
+	const columns = getTableShape(entity);
 	return handleColumns(columns, refine ?? {}, insertConditions) as any;
 };
 
@@ -116,7 +126,7 @@ export const createUpdateSchema: CreateUpdateSchema<undefined> = (
 	entity: Table,
 	refine?: Record<string, any>,
 ) => {
-	const columns = getColumns(entity);
+	const columns = getTableShape(entity);
 	return handleColumns(columns, refine ?? {}, updateConditions) as any;
 };
 
@@ -130,7 +140,7 @@ export function createSchemaFactory<
 		if (isWithEnum(entity)) {
 			return handleEnum(entity, options);
 		}
-		const columns = getColumns(entity);
+		const columns = isTable(entity) ? getTableShape(entity) : getColumns(entity);
 		return handleColumns(columns, refine ?? {}, selectConditions, options) as any;
 	};
 
@@ -138,7 +148,7 @@ export function createSchemaFactory<
 		entity: Table,
 		refine?: Record<string, any>,
 	) => {
-		const columns = getColumns(entity);
+		const columns = getTableShape(entity);
 		return handleColumns(columns, refine ?? {}, insertConditions, options) as any;
 	};
 
@@ -146,7 +156,7 @@ export function createSchemaFactory<
 		entity: Table,
 		refine?: Record<string, any>,
 	) => {
-		const columns = getColumns(entity);
+		const columns = getTableShape(entity);
 		return handleColumns(columns, refine ?? {}, updateConditions, options) as any;
 	};
 

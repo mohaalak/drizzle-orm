@@ -1,3 +1,4 @@
+import type { NestEmbedded } from '~/embed.ts';
 import type { ColumnsSelection, Placeholder, SQL } from '~/sql/sql.ts';
 import type { SQLiteColumn } from '~/sqlite-core/columns/index.ts';
 import type { SQLiteTable, SQLiteTableWithColumns } from '~/sqlite-core/table.ts';
@@ -92,7 +93,7 @@ export type SQLiteSelectJoin<
 				T['_']['tableName'],
 				T['_']['selection'],
 				TJoinedName,
-				TJoinedTable extends SQLiteTable ? TJoinedTable['_']['columns']
+				TJoinedTable extends SQLiteTable ? NestEmbedded<TJoinedTable['_']['columns']>
 					: TJoinedTable extends Subquery | View ? Assume<TJoinedTable['_']['selectedFields'], SelectedFields>
 					: never,
 				T['_']['selectMode']

@@ -1,17 +1,18 @@
 import { type Casing, getCasingFn } from '~/casing.ts';
+import { flattenEmbedBuilders, type NestEmbedded, nestEmbeddedColumns } from '~/embed.ts';
 import { entityKind } from '~/entity.ts';
 import type { InferModelFromColumns } from '~/table.ts';
 import { Table, type TableConfig as TableConfigBase, type UpdateTableConfig } from '~/table.ts';
 import type { CheckBuilder } from './checks.ts';
 import { getPgColumnBuilders, type PgColumnsBuilders } from './columns/all.ts';
 import type {
-	AnyPgColumnBuilder,
 	ExtraConfigColumn,
 	PgBuildColumns,
 	PgBuildExtraConfigColumns,
 	PgColumn,
 	PgColumnBuilder,
 	PgColumns,
+	PgTableColumnsMap,
 } from './columns/common.ts';
 import type { ForeignKey, ForeignKeyBuilder } from './foreign-keys.ts';
 import type { AnyIndexBuilder } from './indexes.ts';
@@ -63,10 +64,11 @@ export type AnyPgTable<TPartial extends Partial<TableConfig> = {}> = PgTable<Upd
 
 export type PgTableWithColumns<T extends TableConfig> =
 	& PgTable<T>
-	& T['columns']
+	// `embed()` groups are reached as nested objects: `users.address.city`.
+	& NestEmbedded<T['columns']>
 	& {
-		readonly $inferSelect: InferModelFromColumns<T['columns'], 'select'>;
-		readonly $inferInsert: InferModelFromColumns<T['columns'], 'insert'>;
+		readonly $inferSelect: NestEmbedded<InferModelFromColumns<T['columns'], 'select'>>;
+		readonly $inferInsert: NestEmbedded<InferModelFromColumns<T['columns'], 'insert'>>;
 	}
 	& {
 		/** @deprecated use `pgTable.withRLS()` instead*/
@@ -80,7 +82,7 @@ export type PgTableWithColumns<T extends TableConfig> =
 export function pgTableWithSchema<
 	TTableName extends string,
 	TSchemaName extends string | undefined,
-	TColumnsMap extends Record<string, AnyPgColumnBuilder>,
+	TColumnsMap extends PgTableColumnsMap,
 >(
 	name: TTableName,
 	columns: TColumnsMap | ((columnTypes: PgColumnsBuilders) => TColumnsMap),
@@ -108,7 +110,9 @@ export function pgTableWithSchema<
 		isAlias: false;
 	}>(name, schema, baseName);
 
-	const parsedColumns: TColumnsMap = typeof columns === 'function' ? columns(getPgColumnBuilders()) : columns;
+	const definedColumns: TColumnsMap = typeof columns === 'function' ? columns(getPgColumnBuilders()) : columns;
+	// `embed()` groups are flattened to dotted keys: `address: embed({ city })` becomes `'address.city'`.
+	const parsedColumns = flattenEmbedBuilders(definedColumns as unknown as Record<string, PgColumnBuilder>, casingFn);
 
 	const builtColumns = Object.fromEntries(
 		Object.entries(parsedColumns).map(([name, colBuilderBase]) => {
@@ -129,10 +133,12 @@ export function pgTableWithSchema<
 		}),
 	) as unknown as PgBuildExtraConfigColumns<TColumnsMap>;
 
-	const table = Object.assign(rawTable, builtColumns);
+	const shape = nestEmbeddedColumns(builtColumns as PgColumns);
+	const table = Object.assign(rawTable, shape);
 
 	table[Table.Symbol.Columns] = builtColumns;
-	table[Table.Symbol.ExtraConfigColumns] = builtColumnsForExtraConfig;
+	if (shape !== builtColumns) table[Table.Symbol.Shape] = shape;
+	table[Table.Symbol.ExtraConfigColumns] = nestEmbeddedColumns(builtColumnsForExtraConfig as any) as any;
 
 	if (extraConfig) {
 		table[PgTable.Symbol.ExtraConfigBuilder] = extraConfig as any;
@@ -154,7 +160,7 @@ export function pgTableWithSchema<
 export interface PgTableFnInternal<TSchema extends string | undefined = undefined> {
 	<
 		TTableName extends string,
-		TColumnsMap extends Record<string, AnyPgColumnBuilder>,
+		TColumnsMap extends PgTableColumnsMap,
 	>(
 		name: TTableName,
 		columns: TColumnsMap,
@@ -171,7 +177,7 @@ export interface PgTableFnInternal<TSchema extends string | undefined = undefine
 
 	<
 		TTableName extends string,
-		TColumnsMap extends Record<string, AnyPgColumnBuilder>,
+		TColumnsMap extends PgTableColumnsMap,
 	>(
 		name: TTableName,
 		columns: (columnTypes: PgColumnsBuilders) => TColumnsMap,
@@ -209,7 +215,7 @@ export interface PgTableFnInternal<TSchema extends string | undefined = undefine
 	 */
 	<
 		TTableName extends string,
-		TColumnsMap extends Record<string, AnyPgColumnBuilder>,
+		TColumnsMap extends PgTableColumnsMap,
 	>(
 		name: TTableName,
 		columns: TColumnsMap,
@@ -248,7 +254,7 @@ export interface PgTableFnInternal<TSchema extends string | undefined = undefine
 	 */
 	<
 		TTableName extends string,
-		TColumnsMap extends Record<string, AnyPgColumnBuilder>,
+		TColumnsMap extends PgTableColumnsMap,
 	>(
 		name: TTableName,
 		columns: (columnTypes: PgColumnsBuilders) => TColumnsMap,

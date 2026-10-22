@@ -1,26 +1,41 @@
 import type * as t from '@sinclair/typebox';
 import type { Column } from '~/column.ts';
-import type { SelectedFieldsFlat } from '~/operations.ts';
+import type { NestEmbedded } from '~/embed.ts';
+import type { SQL } from '~/sql/sql.ts';
+import type { Subquery } from '~/subquery.ts';
 import type { Table } from '~/table.ts';
 import type { Assume, DrizzleTypeError, Simplify } from '~/utils.ts';
 import type { View } from '~/view.ts';
-import type { ColumnIsGeneratedAlwaysAs, GetSelection } from '../utils.ts';
+import type { ColumnIsGeneratedAlwaysAs } from '../utils.ts';
 import type { GetTypeboxType, HandleColumn } from './column.types.ts';
 
 export interface Conditions {
 	never: (column?: Column) => boolean;
 	optional: (column: Column) => boolean;
 	nullable: (column: Column) => boolean;
+	/** Wraps the object schema of an `embed()` group */
+	group: (schema: t.TSchema) => t.TSchema;
 }
+
+/** A nested selection: a table, a view, or an object of fields, such as a table's `embed()` group */
+type NestedSelection = Record<string, any>;
+
+type GetNestedSelection<T> = T extends Table<any> ? NestEmbedded<T['_']['columns']>
+	: T extends View ? T['_']['selectedFields']
+	: T;
+
+type IsNestedSelection<T> = T extends Column | SQL | SQL.Aliased | Subquery ? false
+	: T extends NestedSelection ? true
+	: false;
 
 type BuildRefineField<T> = T extends t.TSchema ? ((schema: T) => t.TSchema) | t.TSchema : never;
 
 export type BuildRefine<
 	TColumns extends Record<string, any>,
 > = {
-	[K in keyof TColumns as TColumns[K] extends Column | SelectedFieldsFlat<Column> | Table | View ? K : never]?:
+	[K in keyof TColumns as TColumns[K] extends Column ? K : IsNestedSelection<TColumns[K]> extends true ? K : never]?:
 		TColumns[K] extends Column ? BuildRefineField<GetTypeboxType<TColumns[K]>>
-			: BuildRefine<GetSelection<TColumns[K]>>;
+			: BuildRefine<GetNestedSelection<TColumns[K]>>;
 };
 
 type HandleRefinement<
@@ -55,15 +70,30 @@ export type BuildSchema<
 				? IsRefinementDefined<TRefinements, K> extends true
 					? Assume<HandleRefinement<TType, TRefinements[K & keyof TRefinements], TColumn>, t.TSchema>
 				: HandleColumn<TType, TColumn>
-				: TColumns[K] extends infer TObject extends SelectedFieldsFlat<Column> | Table | View ? BuildSchema<
+				: IsNestedSelection<TColumns[K]> extends true ? BuildGroup<
 						TType,
-						GetSelection<TObject>,
-						TRefinements extends object ? TRefinements[K & keyof TRefinements] : undefined
+						BuildSchema<
+							TType,
+							GetNestedSelection<TColumns[K]>,
+							TRefinements extends object ? K extends keyof TRefinements ? TRefinements[K] : undefined
+								: undefined
+						>
 					>
 				: t.TAny;
 		}
 	>
 >;
+
+/**
+ * Nested objects only reach insert and update schemas as tables' `embed()` groups: an insert can
+ * leave out a group whose fields are all optional, and an update can also set it to `null`.
+ */
+type BuildGroup<TType extends 'select' | 'insert' | 'update', TSchema extends t.TObject> = TType extends 'update'
+	? t.TOptional<t.TUnion<[TSchema, t.TNull]>>
+	: TType extends 'insert'
+		? TSchema['properties'][keyof TSchema['properties']] extends t.TOptional<t.TSchema> ? t.TOptional<TSchema>
+		: TSchema
+	: TSchema;
 
 export type NoUnknownKeys<
 	TRefinement extends Record<string, any>,

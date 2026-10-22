@@ -7,6 +7,7 @@ import type {
 	PreparedQueryConfig,
 } from '~/cockroach-core/session.ts';
 import type { CockroachTable } from '~/cockroach-core/table.ts';
+import { getTableShape } from '~/embed.ts';
 import { entityKind } from '~/entity.ts';
 import type { TypedQueryBuilder } from '~/query-builders/query-builder.ts';
 import type { SelectResultFields } from '~/query-builders/select.types.ts';
@@ -15,11 +16,11 @@ import type { RunnableQuery } from '~/runnable-query.ts';
 import { SelectionProxyHandler } from '~/selection-proxy.ts';
 import type { ColumnsSelection, Query, SQL, SQLWrapper } from '~/sql/sql.ts';
 import type { Subquery } from '~/subquery.ts';
-import { getTableName, Table } from '~/table.ts';
+import { getTableName } from '~/table.ts';
 import { tracer } from '~/tracing.ts';
 import { orderSelectedFields } from '~/utils.ts';
 import type { CockroachColumn } from '../columns/common.ts';
-import type { SelectedFieldsFlat, SelectedFieldsOrdered } from './select.types.ts';
+import type { SelectedFields, SelectedFieldsOrdered } from './select.types.ts';
 
 export type CockroachDeleteWithout<
 	T extends AnyCockroachDeleteBase,
@@ -48,7 +49,7 @@ export type CockroachDelete<
 export interface CockroachDeleteConfig {
 	where?: SQL | undefined;
 	table: CockroachTable;
-	returningFields?: SelectedFieldsFlat;
+	returningFields?: SelectedFields;
 	returning?: SelectedFieldsOrdered;
 	withList?: Subquery[];
 	useSelectionCastCodecs?: boolean;
@@ -73,7 +74,7 @@ export type CockroachDeleteReturningAll<
 export type CockroachDeleteReturning<
 	T extends AnyCockroachDeleteBase,
 	TDynamic extends boolean,
-	TSelectedFields extends SelectedFieldsFlat,
+	TSelectedFields extends SelectedFields,
 > = CockroachDeleteWithout<
 	CockroachDeleteBase<
 		T['_']['table'],
@@ -223,11 +224,11 @@ export class CockroachDeleteBase<
 	 * ```
 	 */
 	returning(): CockroachDeleteReturningAll<this, TDynamic>;
-	returning<TSelectedFields extends SelectedFieldsFlat>(
+	returning<TSelectedFields extends SelectedFields>(
 		fields: TSelectedFields,
 	): CockroachDeleteReturning<this, TDynamic, TSelectedFields>;
 	returning(
-		fields: SelectedFieldsFlat = this.config.table[Table.Symbol.Columns],
+		fields: SelectedFields = getTableShape(this.config.table) as SelectedFields,
 	): CockroachDeleteReturning<this, TDynamic, any> | CockroachDeleteReturningAll<this, TDynamic> {
 		this.config.returningFields = fields;
 		this.config.returning = orderSelectedFields<CockroachColumn>(

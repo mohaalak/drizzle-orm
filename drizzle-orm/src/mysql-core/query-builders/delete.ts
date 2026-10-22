@@ -1,3 +1,4 @@
+import { getTableShape } from '~/embed.ts';
 import { entityKind, is } from '~/entity.ts';
 import type { MySqlDialect } from '~/mysql-core/dialect.ts';
 import type { AnyMySqlQueryResultHKT, MySqlQueryResultHKT } from '~/mysql-core/session.ts';
@@ -6,7 +7,6 @@ import type { MySqlTable } from '~/mysql-core/table.ts';
 import { SelectionProxyHandler } from '~/selection-proxy.ts';
 import { type CommentInput, type Placeholder, type Query, type SQL, sql, type SQLWrapper } from '~/sql/sql.ts';
 import type { Subquery } from '~/subquery.ts';
-import { Table } from '~/table.ts';
 import type { Assume, ValueOrArray } from '~/utils.ts';
 import type { MySqlColumn } from '../columns/common.ts';
 
@@ -169,7 +169,7 @@ export class MySqlDeleteBase<
 		if (typeof columns[0] === 'function') {
 			const orderBy = columns[0](
 				new Proxy(
-					this.config.table[Table.Symbol.Columns],
+					getTableShape(this.config.table),
 					new SelectionProxyHandler({ sqlAliasedBehavior: 'alias', sqlBehavior: 'sql' }),
 				) as any,
 			);

@@ -1,10 +1,12 @@
 import type { z } from 'zod/v4';
 import type { Column } from '~/column.ts';
-import type { SelectedFieldsFlat } from '~/operations.ts';
+import type { NestEmbedded } from '~/embed.ts';
+import type { SQL } from '~/sql/sql.ts';
+import type { Subquery } from '~/subquery.ts';
 import type { Table } from '~/table.ts';
 import type { Assume, DrizzleTypeError, Simplify } from '~/utils.ts';
 import type { View } from '~/view.ts';
-import type { ColumnIsGeneratedAlwaysAs, GetSelection } from '../utils.ts';
+import type { ColumnIsGeneratedAlwaysAs } from '../utils.ts';
 import type { GetZodType, HandleColumn } from './column.types.ts';
 import type { CoerceOptions } from './schema.types.ts';
 
@@ -12,7 +14,20 @@ export interface Conditions {
 	never: (column?: Column) => boolean;
 	optional: (column: Column) => boolean;
 	nullable: (column: Column) => boolean;
+	/** Wraps the object schema of an `embed()` group */
+	group: (schema: z.ZodType) => z.ZodType;
 }
+
+/** A nested selection: a table, a view, or an object of fields, such as a table's `embed()` group */
+type NestedSelection = Record<string, any>;
+
+type GetNestedSelection<T> = T extends Table<any> ? NestEmbedded<T['_']['columns']>
+	: T extends View ? T['_']['selectedFields']
+	: T;
+
+type IsNestedSelection<T> = T extends Column | SQL | SQL.Aliased | Subquery ? false
+	: T extends NestedSelection ? true
+	: false;
 
 type BuildRefineField<T> = T extends z.ZodType ? ((schema: T) => z.ZodType) | z.ZodType : never;
 
@@ -20,9 +35,9 @@ export type BuildRefine<
 	TColumns extends Record<string, any>,
 	TCoerce extends CoerceOptions,
 > = {
-	[K in keyof TColumns as TColumns[K] extends Column | SelectedFieldsFlat<Column> | Table | View ? K : never]?:
+	[K in keyof TColumns as TColumns[K] extends Column ? K : IsNestedSelection<TColumns[K]> extends true ? K : never]?:
 		TColumns[K] extends Column ? BuildRefineField<GetZodType<TColumns[K], TCoerce>>
-			: BuildRefine<GetSelection<TColumns[K]>, TCoerce>;
+			: BuildRefine<GetNestedSelection<TColumns[K]>, TCoerce>;
 };
 
 type HandleRefinement<
@@ -58,17 +73,30 @@ export type BuildSchema<
 				? IsRefinementDefined<TRefinements, K> extends true
 					? Assume<HandleRefinement<TType, TRefinements[K & keyof TRefinements], TColumn>, z.ZodType>
 				: HandleColumn<TType, TColumn, TCoerce>
-				: TColumns[K] extends infer TObject extends SelectedFieldsFlat<Column> | Table | View ? BuildSchema<
+				: IsNestedSelection<TColumns[K]> extends true ? BuildGroup<
 						TType,
-						GetSelection<TObject>,
-						TRefinements extends object ? TRefinements[K & keyof TRefinements] : undefined,
-						TCoerce
+						BuildSchema<
+							TType,
+							GetNestedSelection<TColumns[K]>,
+							TRefinements extends object ? K extends keyof TRefinements ? TRefinements[K] : undefined : undefined,
+							TCoerce
+						>
 					>
 				: z.ZodAny;
 		}
 	>,
 	{ out: {}; in: {} }
 >;
+
+/**
+ * Nested objects only reach insert and update schemas as tables' `embed()` groups: an insert can
+ * leave out a group whose fields are all optional, and an update can also set it to `null`.
+ */
+type BuildGroup<TType extends 'select' | 'insert' | 'update', TSchema extends z.ZodObject> = TType extends 'update'
+	? z.ZodOptional<z.ZodNullable<TSchema>>
+	: TType extends 'insert'
+		? TSchema['shape'][keyof TSchema['shape']] extends z.ZodOptional<any> ? z.ZodOptional<TSchema> : TSchema
+	: TSchema;
 
 export type NoUnknownKeys<
 	TRefinement extends Record<string, any>,

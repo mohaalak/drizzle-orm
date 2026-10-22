@@ -1,4 +1,5 @@
 import type { GetColumnData } from '~/column.ts';
+import { getTableShape, type NestEmbeddedPartial } from '~/embed.ts';
 import { entityKind, is } from '~/entity.ts';
 import { QueryPromise } from '~/query-promise.ts';
 import { SelectionProxyHandler } from '~/selection-proxy.ts';
@@ -15,7 +16,7 @@ import type {
 import type { SingleStoreTable } from '~/singlestore-core/table.ts';
 import type { Placeholder, Query, SQL, SQLWrapper } from '~/sql/sql.ts';
 import type { Subquery } from '~/subquery.ts';
-import { type InferInsertModel, Table } from '~/table.ts';
+import type { InferInsertColumns } from '~/table.ts';
 import { usedTablesOf } from '~/used-tables.ts';
 import { mapUpdateSet, type UpdateSet, type ValueOrArray } from '~/utils.ts';
 import type { SingleStoreColumn } from '../columns/common.ts';
@@ -34,15 +35,17 @@ export interface SingleStoreUpdateConfig {
 
 export type SingleStoreUpdateSetSource<
 	TTable extends SingleStoreTable,
-	TModel extends Record<string, any> = InferInsertModel<TTable>,
+	TModel extends Record<string, any> = InferInsertColumns<TTable>,
 > =
-	& {
-		[Key in keyof TModel & string]?:
-			| GetColumnData<TTable['_']['columns'][Key], 'query'>
-			| SQL
-			| Placeholder
-			| undefined;
-	}
+	& NestEmbeddedPartial<
+		{
+			[Key in keyof TModel & string]?:
+				| GetColumnData<TTable['_']['columns'][Key], 'query'>
+				| SQL
+				| Placeholder
+				| undefined;
+		}
+	>
 	& {};
 
 export class SingleStoreUpdateBuilder<
@@ -206,7 +209,7 @@ export class SingleStoreUpdateBase<
 		if (typeof columns[0] === 'function') {
 			const orderBy = columns[0](
 				new Proxy(
-					this.config.table[Table.Symbol.Columns],
+					getTableShape(this.config.table),
 					new SelectionProxyHandler({ sqlAliasedBehavior: 'alias', sqlBehavior: 'sql' }),
 				) as any,
 			);

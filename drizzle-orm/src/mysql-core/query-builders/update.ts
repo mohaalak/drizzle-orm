@@ -1,4 +1,5 @@
 import type { GetColumnData } from '~/column.ts';
+import { getTableShape, type NestEmbeddedPartial } from '~/embed.ts';
 import { entityKind, is } from '~/entity.ts';
 import type { MySqlDialect } from '~/mysql-core/dialect.ts';
 import type { AnyMySqlQueryResultHKT, MySqlQueryResultHKT } from '~/mysql-core/session.ts';
@@ -7,7 +8,7 @@ import type { MySqlTable } from '~/mysql-core/table.ts';
 import { SelectionProxyHandler } from '~/selection-proxy.ts';
 import { type CommentInput, type Placeholder, type Query, type SQL, sql, type SQLWrapper } from '~/sql/sql.ts';
 import type { Subquery } from '~/subquery.ts';
-import { type InferInsertModel, Table } from '~/table.ts';
+import type { InferInsertColumns } from '~/table.ts';
 import { type Assume, mapUpdateSet, type UpdateSet, type ValueOrArray } from '~/utils.ts';
 import type { MySqlColumn } from '../columns/common.ts';
 
@@ -23,15 +24,17 @@ export interface MySqlUpdateConfig {
 
 export type MySqlUpdateSetSource<
 	TTable extends MySqlTable,
-	TModel extends Record<string, any> = InferInsertModel<TTable>,
+	TModel extends Record<string, any> = InferInsertColumns<TTable>,
 > =
-	& {
-		[Key in keyof TModel & string]?:
-			| GetColumnData<TTable['_']['columns'][Key], 'query'>
-			| SQL
-			| Placeholder
-			| undefined;
-	}
+	& NestEmbeddedPartial<
+		{
+			[Key in keyof TModel & string]?:
+				| GetColumnData<TTable['_']['columns'][Key], 'query'>
+				| SQL
+				| Placeholder
+				| undefined;
+		}
+	>
 	& {};
 
 export interface MySqlUpdateBuilderConstructor {
@@ -231,7 +234,7 @@ export class MySqlUpdateBase<
 		if (typeof columns[0] === 'function') {
 			const orderBy = columns[0](
 				new Proxy(
-					this.config.table[Table.Symbol.Columns],
+					getTableShape(this.config.table),
 					new SelectionProxyHandler({ sqlAliasedBehavior: 'alias', sqlBehavior: 'sql' }),
 				) as any,
 			);

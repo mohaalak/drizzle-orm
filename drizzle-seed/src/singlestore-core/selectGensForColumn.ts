@@ -1,5 +1,6 @@
 import { generatorsMap } from '../generators/GeneratorFuncs.ts';
 import type { Column, Table } from '../types/tables.ts';
+import { ownColumnName } from '../utils.ts';
 
 export const selectGeneratorForSingleStoreColumn = (
 	table: Table,
@@ -111,7 +112,7 @@ export const selectGeneratorForSingleStoreColumn = (
 				|| col.columnType.startsWith('varchar')
 				|| col.columnType.startsWith('binary')
 				|| col.columnType.startsWith('varbinary'))
-			&& col.name.toLowerCase().includes('name')
+			&& ownColumnName(col).includes('name')
 		) {
 			const generator = new generatorsMap.GenerateFirstName[0]();
 			return generator;
@@ -127,7 +128,7 @@ export const selectGeneratorForSingleStoreColumn = (
 				|| col.columnType.startsWith('varchar')
 				|| col.columnType.startsWith('binary')
 				|| col.columnType.startsWith('varbinary'))
-			&& col.name.toLowerCase().includes('email')
+			&& ownColumnName(col).includes('email')
 		) {
 			const generator = new generatorsMap.GenerateEmail[0]();
 			return generator;

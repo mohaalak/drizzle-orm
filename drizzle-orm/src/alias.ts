@@ -3,6 +3,7 @@ import type * as V1 from './_relations.ts';
 import { OriginalColumn } from './column-common.ts';
 import type { AnyColumn } from './column.ts';
 import { Column } from './column.ts';
+import { EmbeddedColumns } from './embed.ts';
 import { entityKind, is } from './entity.ts';
 import { chunkKindOf, chunkKinds, isChunk, isSQLWrapper, type Name, SQL, sql } from './sql/sql.ts';
 import type { Subquery } from './subquery.ts';
@@ -132,6 +133,11 @@ export class TableAliasProxyHandler<T extends Table | View> implements ProxyHand
 			return result;
 		}
 
+		if (prop === Table.Symbol.Shape) {
+			const shape = (target as Table)[Table.Symbol.Shape];
+			return shape && this.aliasEmbedded(shape, receiver, {});
+		}
+
 		const value = target[prop as keyof typeof target];
 		if (isChunk(value, chunkKindOf(value), chunkKinds.column)) {
 			const columns = (target as Table)[Table.Symbol.Columns];
@@ -144,6 +150,10 @@ export class TableAliasProxyHandler<T extends Table | View> implements ProxyHand
 			if (result === undefined) memo.set(value, result = this.aliasColumn(value, receiver));
 
 			return result;
+		}
+
+		if (is(value, EmbeddedColumns)) {
+			return this.aliasEmbedded(value, receiver, new EmbeddedColumns());
 		}
 
 		return value;
@@ -178,6 +188,32 @@ export class TableAliasProxyHandler<T extends Table | View> implements ProxyHand
 		}
 
 		return this.proxiedColumns = proxiedColumns;
+	}
+
+	private aliasEmbedded<TResult extends Record<string, unknown>>(
+		group: Record<string, unknown>,
+		receiver: any,
+		result: TResult,
+	): TResult {
+		const memo = this.memo ??= new WeakMap();
+		const cached = memo.get(group);
+		if (cached !== undefined) return cached;
+
+		for (const [key, value] of Object.entries(group)) {
+			let aliased = memo.get(value as object);
+			if (aliased === undefined) {
+				memo.set(
+					value as object,
+					aliased = isChunk(value, chunkKindOf(value), chunkKinds.column)
+						? this.aliasColumn(value as AnyColumn, receiver)
+						: this.aliasEmbedded(value as Record<string, unknown>, receiver, new EmbeddedColumns()),
+				);
+			}
+			(result as Record<string, unknown>)[key] = aliased;
+		}
+
+		memo.set(group, result);
+		return result;
 	}
 }
 
