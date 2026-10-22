@@ -1,7 +1,7 @@
 import { aliasedTable, aliasedTableSQL, getOriginalColumnFromAlias } from '~/alias.ts';
 import { CodecsCollection } from '~/codecs.ts';
 import { Column } from '~/column.ts';
-import { flattenSelectedFields } from '~/embed.ts';
+import { expandInsertColumnList, flattenSelectedFields } from '~/embed.ts';
 import { entityKind, is } from '~/entity.ts';
 import { DrizzleError } from '~/errors.ts';
 import type { TypedQueryBuilder } from '~/query-builders/query-builder.ts';
@@ -683,9 +683,10 @@ export class SQLiteDialect {
 	}: SQLiteInsertConfig): SQL {
 		// const isSingleValue = values.length === 1;
 		const columns: Record<string, SQLiteColumn> = table[Table.Symbol.Columns];
+		const insertColumnList = columnList && expandInsertColumnList(table, columnList);
 
-		const colEntries: [string, SQLiteColumn][] = columnList
-			? columnList.map((name) => [name, columns[name]!])
+		const colEntries: [string, SQLiteColumn][] = insertColumnList
+			? insertColumnList.map((name) => [name, columns[name]!])
 			: Object.entries(columns);
 		const colEntriesFiltered: [string, SQLiteColumn][] = select && !is(valuesOrSelect, SQL)
 			? Object

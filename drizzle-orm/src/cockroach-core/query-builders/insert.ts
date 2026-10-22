@@ -9,6 +9,7 @@ import type {
 } from '~/cockroach-core/session.ts';
 import type { CockroachTable, TableConfig } from '~/cockroach-core/table.ts';
 import {
+	expandInsertColumnList,
 	flattenEmbeddedValues,
 	flattenSelectedFields,
 	getTableShape,
@@ -122,7 +123,9 @@ export class CockroachInsertBuilder<
 		private dialect: CockroachDialect,
 		private withList?: Subquery[],
 		private columnList?: string[],
-	) {}
+	) {
+		if (columnList) this.columnList = expandInsertColumnList(table, columnList);
+	}
 
 	values(value: CockroachInsertValue<TTable, OverrideT, TColumnList>): CockroachInsertBase<TTable, TQueryResult>;
 	values(values: CockroachInsertValue<TTable, OverrideT, TColumnList>[]): CockroachInsertBase<TTable, TQueryResult>;

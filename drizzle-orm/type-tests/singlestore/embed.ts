@@ -142,3 +142,38 @@ Expect<
 	const ids = await db.insert(grouped).values({}).$returningId();
 	Expect<Equal<typeof ids, { id: number; key: { uuid: string } }[]>>();
 }
+
+// A column list can name an embed() group. The group stands for every column in it.
+{
+	db.insert(users, 'name', 'address').values({ name: 'Ada', address: { city: 'Berlin', geo: { lat: 1 } } });
+	db.insert(users, 'name', 'address.city', 'address.geo').values({
+		name: 'Ada',
+		address: { city: 'Berlin', geo: { lat: 1 } },
+	});
+	db.insert(users, 'name', 'address.city', 'note').values({
+		name: 'Ada',
+		address: { city: 'Berlin' },
+		note: { body: 'hi' },
+	});
+
+	// @ts-expect-error - missing required column "address.city"
+	db.insert(users, 'name', 'address.street');
+	// @ts-expect-error - missing required column "address.city"
+	db.insert(users, 'name', 'address.geo');
+	// @ts-expect-error - `address` repeats `address.city`
+	db.insert(users, 'name', 'address', 'address.city');
+	// @ts-expect-error - `address` repeats `address.geo`
+	db.insert(users, 'name', 'address', 'address.geo');
+	// @ts-expect-error - not a column or an embed() group
+	db.insert(users, 'name', 'address', 'nope');
+
+	// @ts-expect-error - `city` is required in the group
+	db.insert(users, 'name', 'address').values({ name: 'Ada', address: { street: 'Main' } });
+	// @ts-expect-error - `note` is not included in the column selection
+	db.insert(users, 'name', 'address').values({ name: 'Ada', address: { city: 'Berlin' }, note: { body: 'x' } });
+	// @ts-expect-error - `street` is not included in the column selection
+	db.insert(users, 'name', 'address.city', 'address.geo').values({
+		name: 'Ada',
+		address: { city: 'Berlin', street: 'Main', geo: { lat: 1 } },
+	});
+}

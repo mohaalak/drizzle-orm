@@ -271,6 +271,67 @@ describe('embed (query building)', () => {
 			'insert into [embed_users] ([name], [address_street], [address_city], [address_geo_lat], [address_geo_lng], [billing_zip_code]) select 1',
 		);
 	});
+
+	test('a column list can name an embed() group', () => {
+		expect(
+			mock.insert(users, 'name', 'address').values({
+				name: 'Ada',
+				address: { city: 'Berlin', geo: { lat: 1 } },
+			}).toSQL(),
+		).toEqual({
+			sql:
+				'insert into [embed_users] ([name], [address_street], [address_city], [address_geo_lat], [address_geo_lng]) values (@par0, default, @par1, @par2, default)',
+			params: ['Ada', 'Berlin', 1],
+		});
+
+		expect(
+			mock.insert(users, 'name', 'address.city', 'address.geo').values({
+				name: 'Ada',
+				address: { city: 'Berlin', geo: { lat: 1 } },
+			}).toSQL(),
+		).toEqual({
+			sql:
+				'insert into [embed_users] ([name], [address_city], [address_geo_lat], [address_geo_lng]) values (@par0, @par1, @par2, default)',
+			params: ['Ada', 'Berlin', 1],
+		});
+
+		expect(
+			mock.insert(users, 'name', 'address.city', 'billing').values({
+				name: 'Ada',
+				address: { city: 'Berlin' },
+				billing: { zip: '10115' },
+			}).toSQL(),
+		).toEqual({
+			sql: 'insert into [embed_users] ([name], [address_city], [billing_zip_code]) values (@par0, @par1, @par2)',
+			params: ['Ada', 'Berlin', '10115'],
+		});
+
+		expect(
+			mock.insert(users, 'name', 'address.city').values({ name: 'Ada', address: { city: 'Berlin' } }).toSQL(),
+		).toEqual({
+			sql: 'insert into [embed_users] ([name], [address_city]) values (@par0, @par1)',
+			params: ['Ada', 'Berlin'],
+		});
+
+		expect(
+			mock.insert(users, 'name', 'address').select(
+				mock.select({ name: src.name, address: { city: src.city } }).from(src),
+			).toSQL().sql,
+		).toBe('insert into [embed_users] ([name], [address_city]) select [name], [city] from [embed_src]');
+
+		// @ts-expect-error - `address` repeats `address.city`
+		expect(() => mock.insert(users, 'name', 'address', 'address.city')).toThrow(
+			'Duplicate columns are not allowed in insert selection: "address.city"',
+		);
+		// @ts-expect-error - `address` repeats `address.city`
+		expect(() => mock.insert(users, 'name', 'address.city', 'address')).toThrow(
+			'Duplicate columns are not allowed in insert selection: "address"',
+		);
+		// @ts-expect-error - not a column or an embed() group
+		expect(() => mock.insert(users, 'name', 'address', 'nope')).toThrow(
+			'Column "nope" does not exist in table "embed_users"',
+		);
+	});
 });
 
 describe.skipIf(!connectionString)('embed', () => {
@@ -476,6 +537,22 @@ describe.skipIf(!connectionString)('embed', () => {
 			city: 'Basel',
 			geo: { lat: 46, lng: 7 },
 		}]);
+	});
+
+	test('insert writes a group named in the column list', async () => {
+		await db.insert(users, 'name', 'address').values({
+			name: 'ColList',
+			address: { city: 'Berlin', geo: { lat: 1 } },
+		});
+
+		expect(
+			await db.select({ name: users.name, address: users.address }).from(users).where(eq(users.name, 'ColList')),
+		).toEqual([{
+			name: 'ColList',
+			address: { street: null, city: 'Berlin', geo: { lat: 1, lng: null } },
+		}]);
+
+		await db.delete(users).where(eq(users.name, 'ColList'));
 	});
 });
 

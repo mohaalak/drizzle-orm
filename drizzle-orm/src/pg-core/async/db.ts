@@ -1,14 +1,9 @@
 import type { Cache } from '~/cache/core/cache.ts';
+import type { InsertColumnListArg, InsertColumnListKey, ResolvedInsertColumnList } from '~/embed.ts';
 import { entityKind, is } from '~/entity.ts';
 import type { BasePgAsyncSession, PgAsyncSession, PgAsyncTransaction } from '~/pg-core/async/session.ts';
 import type { PgDialect } from '~/pg-core/dialect.ts';
-import {
-	type NoDuplicateColumns,
-	PgInsertBuilder,
-	PgSelectBuilder,
-	PgUpdateBuilder,
-	QueryBuilder,
-} from '~/pg-core/query-builders/index.ts';
+import { PgInsertBuilder, PgSelectBuilder, PgUpdateBuilder, QueryBuilder } from '~/pg-core/query-builders/index.ts';
 import type { PgQueryResultHKT, PgQueryResultKind, PgTransactionConfig } from '~/pg-core/session.ts';
 import type { PgTable } from '~/pg-core/table.ts';
 import type { TypedQueryBuilder } from '~/query-builders/query-builder.ts';
@@ -17,7 +12,6 @@ import { SelectionProxyHandler } from '~/selection-proxy.ts';
 import { type ColumnsSelection, type SQL, sql, type SQLWrapper } from '~/sql/sql.ts';
 import { WithSubquery } from '~/subquery.ts';
 import type { InferInsertColumns, RequiredInsertKeys } from '~/table.ts';
-import type { DrizzleTypeError, IsNever, JoinUnion } from '~/utils.ts';
 import type { PgColumn } from '../columns/index.ts';
 import { RelationalQueryBuilder } from '../query-builders/query.ts';
 import type { SelectedFields } from '../query-builders/select.types.ts';
@@ -375,20 +369,18 @@ export class BasePgAsyncDatabase<
 
 		function insert<
 			TTable extends PgTable,
-			TColumnList extends (keyof InferInsertColumns<TTable, { override: true }>)[] = [],
+			TColumnList extends InsertColumnListKey<InferInsertColumns<TTable, { override: true }>>[] = [],
 			TRequiredKeys extends string = RequiredInsertKeys<TTable>,
 		>(
 			table: TTable,
-			...columns: TColumnList extends [] ? []
-				: IsNever<TRequiredKeys> extends true ? TColumnList & NoDuplicateColumns<TColumnList>
-				: [TRequiredKeys] extends [TColumnList[number]] ? TColumnList & NoDuplicateColumns<TColumnList>
-				: DrizzleTypeError<
-					`Column selection is missing following required columns: ${JoinUnion<
-						`"${Exclude<TRequiredKeys, TColumnList[number]>}"`,
-						', '
-					>}`
-				>[]
-		): PgInsertBuilder<TTable, TQueryResult, TColumnList extends [] ? 'all' : TColumnList, false, PgAsyncInsertHKT>;
+			...columns: InsertColumnListArg<InferInsertColumns<TTable, { override: true }>, TColumnList, TRequiredKeys>
+		): PgInsertBuilder<
+			TTable,
+			TQueryResult,
+			ResolvedInsertColumnList<InferInsertColumns<TTable, { override: true }>, TColumnList>,
+			false,
+			PgAsyncInsertHKT
+		>;
 		function insert<TTable extends PgTable>(
 			table: TTable,
 			...columns: string[]
@@ -625,20 +617,18 @@ export class BasePgAsyncDatabase<
 	 */
 	insert<
 		TTable extends PgTable,
-		TColumnList extends (keyof InferInsertColumns<TTable, { override: true }>)[] = [],
+		TColumnList extends InsertColumnListKey<InferInsertColumns<TTable, { override: true }>>[] = [],
 		TRequiredKeys extends string = RequiredInsertKeys<TTable>,
 	>(
 		table: TTable,
-		...columns: TColumnList extends [] ? []
-			: IsNever<TRequiredKeys> extends true ? TColumnList & NoDuplicateColumns<TColumnList>
-			: [TRequiredKeys] extends [TColumnList[number]] ? TColumnList & NoDuplicateColumns<TColumnList>
-			: DrizzleTypeError<
-				`Column selection is missing following required columns: ${JoinUnion<
-					`"${Exclude<TRequiredKeys, TColumnList[number]>}"`,
-					', '
-				>}`
-			>[]
-	): PgInsertBuilder<TTable, TQueryResult, TColumnList extends [] ? 'all' : TColumnList, false, PgAsyncInsertHKT>;
+		...columns: InsertColumnListArg<InferInsertColumns<TTable, { override: true }>, TColumnList, TRequiredKeys>
+	): PgInsertBuilder<
+		TTable,
+		TQueryResult,
+		ResolvedInsertColumnList<InferInsertColumns<TTable, { override: true }>, TColumnList>,
+		false,
+		PgAsyncInsertHKT
+	>;
 	insert<TTable extends PgTable>(
 		table: TTable,
 		...columns: string[]

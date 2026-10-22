@@ -1,7 +1,7 @@
 import { aliasedTable, aliasedTableSQL, getOriginalColumnFromAlias } from '~/alias.ts';
 import { CodecsCollection } from '~/codecs.ts';
 import { Column } from '~/column.ts';
-import { flattenSelectedFields } from '~/embed.ts';
+import { expandInsertColumnList, flattenSelectedFields } from '~/embed.ts';
 import { entityKind, is } from '~/entity.ts';
 import { DrizzleError } from '~/errors.ts';
 import type { TypedQueryBuilder } from '~/query-builders/query-builder.ts';
@@ -723,8 +723,9 @@ export class MySqlDialect {
 	}: MySqlInsertConfig): { sql: SQL; generatedIds: Record<string, unknown>[] } {
 		// const isSingleValue = values.length === 1;
 		const columns: Record<string, MySqlColumn> = table[Table.Symbol.Columns];
-		const colEntries: [string, MySqlColumn][] = columnList
-			? columnList.map((name) => [name, columns[name]!])
+		const insertColumnList = columnList && expandInsertColumnList(table, columnList);
+		const colEntries: [string, MySqlColumn][] = insertColumnList
+			? insertColumnList.map((name) => [name, columns[name]!])
 			: Object.entries(columns);
 		const colEntriesFiltered: [string, MySqlColumn][] = select && !is(valuesOrSelect, SQL)
 			? Object

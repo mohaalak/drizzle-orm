@@ -6,7 +6,7 @@ import type { SQL } from './sql/sql.ts';
 import { isSQLWrapper } from './sql/sql.ts';
 import type { Subquery } from './subquery.ts';
 import { Table } from './table.ts';
-import type { DrizzleTypeError, Simplify } from './utils.ts';
+import type { DrizzleTypeError, IsNever, JoinUnion, Simplify } from './utils.ts';
 
 /**
  * Separates the segments of an embedded column's key in the table's flat column map:
@@ -364,6 +364,51 @@ export function isEmbeddedGroupKey(columns: Record<string, unknown>, key: string
 }
 
 /**
+ * Expands `embed()` group names in an insert column list into the dotted columns they cover.
+ * `'address'` becomes every `'address.*'` column, nested groups included, in column-map order.
+ * A name that is itself a column is kept, so a list of dotted columns comes back unchanged.
+ * Listing a group and a column it covers throws. An unknown name throws.
+ *
+ * @internal
+ */
+export function expandInsertColumnList(table: Table, columnList: readonly string[]): string[] {
+	const columns = table[Table.Symbol.Columns] as Record<string, unknown>;
+	const expanded: string[] = [];
+	const seenDirect = new Set<string>();
+	const coveredByGroup = new Set<string>();
+
+	for (const name of columnList) {
+		if (Object.prototype.hasOwnProperty.call(columns, name)) {
+			if (coveredByGroup.has(name)) {
+				throw new Error(`Duplicate columns are not allowed in insert selection: "${name}"`);
+			}
+			seenDirect.add(name);
+			expanded.push(name);
+			continue;
+		}
+
+		if (!isEmbeddedGroupKey(columns, name)) {
+			throw new Error(`Column "${name}" does not exist in table "${table[Table.Symbol.Name]}"`);
+		}
+
+		const prefix = name + EmbeddedKeySeparator;
+		const groupColumns: string[] = [];
+		for (const column of Object.keys(columns)) {
+			if (column.startsWith(prefix)) groupColumns.push(column);
+		}
+		if (groupColumns.some((column) => seenDirect.has(column) || coveredByGroup.has(column))) {
+			throw new Error(`Duplicate columns are not allowed in insert selection: "${name}"`);
+		}
+		for (const column of groupColumns) {
+			coveredByGroup.add(column);
+			expanded.push(column);
+		}
+	}
+
+	return expanded;
+}
+
+/**
  * Turns a relational query's `columns` config, which may name `embed()` groups, into one keyed by
  * column: `{ address: true }` selects every column in the group, and `{ address: { city: true } }`
  * becomes `{ 'address.city': true }`. Dotted keys are kept as they are.
@@ -444,6 +489,71 @@ export type EmbeddedGroupKeys<T> = GroupKeys<T>;
 
 /** One `embed()` group of a flat, dotted map, keyed relative to it: `'address.geo.lat'` → `'geo.lat'`. */
 export type EmbeddedGroupOf<T, Head extends string> = GroupOf<T, Head>;
+
+type GroupPath<TKey extends string> = TKey extends `${infer Head}.${infer Rest}`
+	? Rest extends DottedKey ? Head | `${Head}.${GroupPath<Rest>}`
+	: Head
+	: never;
+
+/** Every `embed()` group path in a flat map: `'address'` and `'address.geo'` for `'address.geo.lat'`. */
+type EmbeddedGroupPath<T> = GroupPath<Extract<keyof T, DottedKey>>;
+
+/** A column key or an `embed()` group path an insert column list may name. */
+export type InsertColumnListKey<TColumns> = (keyof TColumns & string) | EmbeddedGroupPath<TColumns>;
+
+type ColumnsNamedBy<TColumns, TName> = TName extends string ? TName extends keyof TColumns ? TName
+	: Extract<keyof TColumns & string, `${TName}.${string}`>
+	: never;
+
+/**
+ * The dotted columns an insert column list names. A group path expands to every column under it.
+ * Each name is expanded on its own, so a mix of columns and groups keeps every column.
+ */
+export type ExpandInsertColumnList<TColumns, TList extends readonly string[]> = ColumnsNamedBy<
+	TColumns,
+	TList[number]
+>;
+
+type NoDuplicateExpandedColumns<
+	TColumns,
+	TList extends readonly unknown[],
+	TSeen = never,
+> = TList extends readonly [infer Head, ...infer Tail] ? [
+		Head extends string ? [Extract<ColumnsNamedBy<TColumns, Head>, TSeen>] extends [never] ? Head
+			: DrizzleTypeError<`Duplicate columns are not allowed in insert selection: "${Head}"`>
+			: Head,
+		...NoDuplicateExpandedColumns<
+			TColumns,
+			Tail,
+			TSeen | (Head extends string ? ColumnsNamedBy<TColumns, Head> : never)
+		>,
+	]
+	: TList;
+
+/**
+ * The `...columns` argument of `db.insert(table, ...columns)`. Group names count toward the
+ * required-column check, and a group that overlaps a column already named is a duplicate.
+ */
+export type InsertColumnListArg<
+	TColumns,
+	TColumnList extends readonly string[],
+	TRequiredKeys extends string,
+> = TColumnList extends readonly [] ? []
+	: IsNever<TRequiredKeys> extends true ? TColumnList & NoDuplicateExpandedColumns<TColumns, TColumnList>
+	: [TRequiredKeys] extends [ExpandInsertColumnList<TColumns, TColumnList>]
+		? TColumnList & NoDuplicateExpandedColumns<TColumns, TColumnList>
+	: DrizzleTypeError<
+		`Column selection is missing following required columns: ${JoinUnion<
+			`"${Exclude<TRequiredKeys, ExpandInsertColumnList<TColumns, TColumnList> & string>}"`,
+			', '
+		>}`
+	>[];
+
+/** `'all'` when the caller passed no column list; otherwise the dotted columns that list names. */
+export type ResolvedInsertColumnList<
+	TColumns,
+	TColumnList extends readonly string[],
+> = TColumnList extends readonly [] ? 'all' : ExpandInsertColumnList<TColumns, TColumnList>[];
 
 /**
  * Flattens a relational query's `columns` config into the dotted keys of the table's column map

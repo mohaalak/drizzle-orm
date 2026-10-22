@@ -1,4 +1,5 @@
 import {
+	expandInsertColumnList,
 	flattenEmbeddedValues,
 	flattenSelectedFields,
 	getTableShape,
@@ -144,7 +145,9 @@ export class PgInsertBuilder<
 		private overridingSystemValue_?: boolean,
 		private columnList?: string[],
 		private builder: PgInsertBuilderConstructor = PgInsertBase,
-	) {}
+	) {
+		if (columnList) this.columnList = expandInsertColumnList(table, columnList);
+	}
 
 	overridingSystemValue(): Omit<
 		PgInsertBuilder<TTable, TQueryResult, TColumnList, true, TBuilderHKT>,

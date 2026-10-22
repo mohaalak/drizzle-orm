@@ -4,6 +4,7 @@ import { Column } from '~/column.ts';
 import {
 	EmbeddedJsonKeySeparator,
 	EmbeddedKeySeparator,
+	expandInsertColumnList,
 	flattenEmbeddedColumnsConfig,
 	flattenSelectedFields,
 } from '~/embed.ts';
@@ -879,12 +880,13 @@ export class MsSqlDialect {
 		{ table, values: valuesOrSelect, output, columnList, select, useSelectionCastCodecs }: MsSqlInsertConfig,
 	): SQL {
 		const columns: Record<string, MsSqlColumn> = table[Table.Symbol.Columns];
+		const insertColumnList = columnList && expandInsertColumnList(table, columnList);
 		const colEntries: [string, MsSqlColumn][] = select && !is(valuesOrSelect, SQL)
 			? Object
 				.keys(flattenSelectedFields((valuesOrSelect as TypedQueryBuilder<any>)._.selectedFields))
 				.map((key) => [key, columns[key]!] as [string, MsSqlColumn])
-			: columnList
-			? columnList.map((name) => [name, columns[name]!] as [string, MsSqlColumn])
+			: insertColumnList
+			? insertColumnList.map((name) => [name, columns[name]!] as [string, MsSqlColumn])
 			: Object.entries(columns).filter(
 				([_, col]) => !col.shouldDisableInsert(),
 			);

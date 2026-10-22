@@ -1,4 +1,5 @@
 import type { Cache } from '~/cache/core/cache.ts';
+import type { InsertColumnListArg, InsertColumnListKey, ResolvedInsertColumnList } from '~/embed.ts';
 import { entityKind, is } from '~/entity.ts';
 import type { TypedQueryBuilder } from '~/query-builders/query-builder.ts';
 import type { AnyRelations, EmptyRelations } from '~/relations.ts';
@@ -6,15 +7,8 @@ import { SelectionProxyHandler } from '~/selection-proxy.ts';
 import { type ColumnsSelection, type SQL, sql, type SQLWrapper } from '~/sql/sql.ts';
 import { WithSubquery } from '~/subquery.ts';
 import type { InferInsertColumns, RequiredInsertKeys } from '~/table.ts';
-import type { DrizzleTypeError, IsNever, JoinUnion } from '~/utils.ts';
 import type { MySqlDialect } from '../dialect.ts';
-import {
-	MySqlInsertBuilder,
-	MySqlSelectBuilder,
-	MySqlUpdateBuilder,
-	type NoDuplicateColumns,
-	QueryBuilder,
-} from '../query-builders/index.ts';
+import { MySqlInsertBuilder, MySqlSelectBuilder, MySqlUpdateBuilder, QueryBuilder } from '../query-builders/index.ts';
 import { RelationalQueryBuilder } from '../query-builders/query.ts';
 import type { SelectedFields } from '../query-builders/select.types.ts';
 import type {
@@ -453,20 +447,17 @@ export class MySqlAsyncDatabase<
 	 */
 	insert<
 		TTable extends MySqlTable,
-		TColumnList extends (keyof InferInsertColumns<TTable>)[] = [],
+		TColumnList extends InsertColumnListKey<InferInsertColumns<TTable>>[] = [],
 		TRequiredKeys extends string = RequiredInsertKeys<TTable>,
 	>(
 		table: TTable,
-		...columns: TColumnList extends [] ? []
-			: IsNever<TRequiredKeys> extends true ? TColumnList & NoDuplicateColumns<TColumnList>
-			: [TRequiredKeys] extends [TColumnList[number]] ? TColumnList & NoDuplicateColumns<TColumnList>
-			: DrizzleTypeError<
-				`Column selection is missing following required columns: ${JoinUnion<
-					`"${Exclude<TRequiredKeys, TColumnList[number]>}"`,
-					', '
-				>}`
-			>[]
-	): MySqlInsertBuilder<TTable, TQueryResult, TColumnList extends [] ? 'all' : TColumnList, MySqlAsyncInsertHKT>;
+		...columns: InsertColumnListArg<InferInsertColumns<TTable>, TColumnList, TRequiredKeys>
+	): MySqlInsertBuilder<
+		TTable,
+		TQueryResult,
+		ResolvedInsertColumnList<InferInsertColumns<TTable>, TColumnList>,
+		MySqlAsyncInsertHKT
+	>;
 	insert<TTable extends MySqlTable>(
 		table: TTable,
 		...columns: string[]
