@@ -3,6 +3,9 @@ import type { AbstractGenerator, GenerateInterval } from '../generators/Generato
 import type { Column } from '../types/tables.ts';
 
 const pickGenerator = (col: Column, isPrimaryKey: boolean) => {
+	// a column in an `embed()` group is named by its path (`'contact.email'`), but only its own name says what it holds
+	const columnName = col.name.split('.').at(-1)!.toLowerCase();
+
 	// INT ------------------------------------------------------------------------------------------------------------
 	if (
 		(col.columnType.includes('serial')
@@ -114,7 +117,7 @@ const pickGenerator = (col: Column, isPrimaryKey: boolean) => {
 		(col.columnType === 'text'
 			|| col.columnType.startsWith('varchar')
 			|| col.columnType.startsWith('char'))
-		&& col.name.toLowerCase().includes('name')
+		&& columnName.includes('name')
 	) {
 		const generator = new generatorsMap.GenerateFirstName[0]();
 
@@ -125,7 +128,7 @@ const pickGenerator = (col: Column, isPrimaryKey: boolean) => {
 		(col.columnType === 'text'
 			|| col.columnType.startsWith('varchar')
 			|| col.columnType.startsWith('char'))
-		&& col.name.toLowerCase().includes('email')
+		&& columnName.includes('email')
 	) {
 		const generator = new generatorsMap.GenerateEmail[0]();
 
