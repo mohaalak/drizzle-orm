@@ -166,18 +166,6 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 }
 
 /**
- * Reads one selected field. `getSelectedFields()` is a proxy that throws when a field is raw SQL
- * without an alias; that field is a leaf, and an insert only needs its key.
- */
-function readSelectedField(fields: Record<string, unknown>, key: string): unknown {
-	try {
-		return fields[key];
-	} catch {
-		return undefined;
-	}
-}
-
-/**
  * A nested plain object or an {@link EmbeddedColumns} group is walked. A column, SQL value,
  * subquery, view, or any other SQL wrapper is a leaf. A table is not a leaf: its shape is.
  */
@@ -203,7 +191,7 @@ export function flattenSelectedFields(
 ): Record<string, unknown> {
 	for (const key of Object.keys(fields)) {
 		const path = prefix === '' ? key : prefix + EmbeddedKeySeparator + key;
-		const field = readSelectedField(fields, key);
+		const field = fields[key];
 		if (is(field, Table)) {
 			flattenSelectedFields(getTableShape(field), path, result);
 			continue;
