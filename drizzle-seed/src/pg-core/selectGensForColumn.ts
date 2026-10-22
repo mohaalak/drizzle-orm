@@ -1,10 +1,10 @@
 import { generatorsMap } from '../generators/GeneratorFuncs.ts';
 import type { AbstractGenerator, GenerateInterval } from '../generators/Generators.ts';
 import type { Column } from '../types/tables.ts';
+import { ownColumnName } from '../utils.ts';
 
 const pickGenerator = (col: Column, isPrimaryKey: boolean) => {
-	// a column in an `embed()` group is named by its path (`'contact.email'`), but only its own name says what it holds
-	const columnName = col.name.split('.').at(-1)!.toLowerCase();
+	const columnName = ownColumnName(col);
 
 	// INT ------------------------------------------------------------------------------------------------------------
 	if (

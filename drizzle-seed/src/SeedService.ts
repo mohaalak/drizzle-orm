@@ -1188,25 +1188,25 @@ export class SeedService {
 			override: boolean;
 		},
 	): SeedQuery => {
+		// an `embed()` group is written as a nested object, while the seed generates its columns under dotted keys
+		const nestedRows = rows.map(nestEmbeddedRow);
+
 		if (is(db, PgAsyncDatabase<any>)) {
 			const query = db.insert((schema as { [key: string]: PgTable })[tableName]!);
 
-			// an `embed()` group is written as a nested object, while the seed generates its columns under dotted keys
-			const nestedRows = rows.map(nestEmbeddedRow);
-
 			return override === true ? query.overridingSystemValue().values(nestedRows) : query.values(nestedRows);
 		} else if (is(db, MySqlAsyncDatabase<any, any>)) {
-			return db.insert((schema as { [key: string]: MySqlTable })[tableName]!).values(rows);
+			return db.insert((schema as { [key: string]: MySqlTable })[tableName]!).values(nestedRows);
 		} else if (is(db, SQLiteAsyncDatabase<any, any>)) {
-			return db.insert((schema as { [key: string]: SQLiteTable })[tableName]!).values(rows);
+			return db.insert((schema as { [key: string]: SQLiteTable })[tableName]!).values(nestedRows);
 		} else if (is(db, MsSqlDatabase<any, any>)) {
-			return db.insert((schema as { [key: string]: MsSqlTable })[tableName]!).values(rows);
+			return db.insert((schema as { [key: string]: MsSqlTable })[tableName]!).values(nestedRows);
 		} else if (is(db, CockroachDatabase<any, any>)) {
-			return db.insert((schema as { [key: string]: CockroachTable })[tableName]!).values(rows);
+			return db.insert((schema as { [key: string]: CockroachTable })[tableName]!).values(nestedRows);
 		}
 
 		return (db as SingleStoreDatabase<any, any>).insert((schema as { [key: string]: SingleStoreTable })[tableName]!)
-			.values(rows);
+			.values(nestedRows);
 	};
 
 	/** MsSql refuses an explicit write to an identity column unless it is told to allow it around the statement. */

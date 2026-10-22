@@ -1,13 +1,17 @@
-import type { AnyColumn } from 'drizzle-orm';
+import { type AnyColumn, getTableColumns, type Table } from 'drizzle-orm';
 import type { Column, RelationWithReferences } from './types/tables';
-
-const tableColumnsSymbol = Symbol.for('drizzle:Columns');
 
 /**
  * A table's columns by their keys. The table object nests the columns of an `embed()` group (`users.address.city`),
  * while this map keeps them flat under dotted keys (`'address.city'`), which is how the seed names them.
  */
-export const getFlatColumns = (table: object) => (table as any)[tableColumnsSymbol] as { [key: string]: AnyColumn };
+export const getFlatColumns = (table: object) => getTableColumns(table as Table) as { [key: string]: AnyColumn };
+
+/**
+ * A column's own name, lowercased, for picking a generator by what the column holds. A column in an `embed()` group is
+ * named by its path (`'contact.email'`).
+ */
+export const ownColumnName = (col: Column) => col.name.split('.').at(-1)!.toLowerCase();
 
 export const isRelationCyclic = (
 	startRel: RelationWithReferences,
