@@ -309,6 +309,24 @@ describe.each([
 		await expectRelational(rqb, (query) => Promise.resolve(query));
 	});
 
+	test('columns, where and orderBy take groups nested', async () => {
+		expect(
+			await rqb.query.shops.findFirst({
+				columns: { location: { geo: true } },
+				where: { location: { city: 'Berlin', geo: { lat: { gt: 0 } } } },
+				with: { orders: { columns: { delivery: true }, where: { delivery: { city: { isNotNull: true } } } } },
+			}),
+		).toEqual({ location: { geo: { lat: 52 } }, orders: [{ delivery: { city: 'Potsdam' } }] });
+
+		expect(
+			await rqb.query.orders.findMany({
+				columns: { 'delivery.city': true },
+				where: { shop: { location: { city: 'Berlin' } } },
+				orderBy: { delivery: { city: 'asc' } },
+			}),
+		).toEqual([{ delivery: { city: null } }, { delivery: { city: 'Potsdam' } }]);
+	});
+
 	test('sync execution nests groups', () => {
 		expect(rqb.query.shops.findFirst().sync()).toEqual({
 			id: 1,

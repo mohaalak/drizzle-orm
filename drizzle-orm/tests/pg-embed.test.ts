@@ -245,4 +245,112 @@ describe.each([
 			shop: { id: 1, location: { city: 'Berlin', geo: { lat: 52 } } },
 		}]);
 	});
+
+	test('columns, where and orderBy take groups nested', async () => {
+		expect(
+			await rqb.query.shops.findFirst({
+				columns: { location: { geo: true } },
+				where: { location: { city: 'Berlin', geo: { lat: { gt: 0 } } } },
+				with: {
+					orders: {
+						columns: { delivery: true },
+						where: { delivery: { city: { isNotNull: true } } },
+					},
+				},
+			}),
+		).toEqual({ location: { geo: { lat: 52 } }, orders: [{ delivery: { city: 'Potsdam' } }] });
+
+		expect(
+			await rqb.query.orders.findMany({
+				columns: { 'delivery.city': true },
+				where: { shop: { location: { city: 'Berlin' } } },
+				orderBy: { delivery: { city: 'asc' } },
+			}),
+		).toEqual(
+			// nulls sort last in ascending order
+			[{ delivery: { city: 'Potsdam' } }, { delivery: { city: null } }],
+		);
+	});
+
+	test('columns selects groups whole, by their columns, or by dotted keys', async () => {
+		await rqb.insert(shops).values({ location: { city: 'Lima', geo: { lat: -12 } } });
+
+		expect(await rqb.query.shops.findMany({ columns: { location: true }, orderBy: { location: { city: 'asc' } } }))
+			.toEqual([
+				{ location: { city: 'Berlin', geo: { lat: 52 } } },
+				{ location: { city: 'Lima', geo: { lat: -12 } } },
+			]);
+		expect(await rqb.query.shops.findFirst({ columns: { id: true, location: { geo: true } } })).toEqual({
+			id: 1,
+			location: { geo: { lat: 52 } },
+		});
+		expect(await rqb.query.shops.findFirst({ columns: { location: { geo: false } } })).toEqual({
+			id: 1,
+			location: { city: 'Berlin' },
+		});
+		expect(await rqb.query.shops.findFirst({ columns: { 'location.city': true } })).toEqual({
+			location: { city: 'Berlin' },
+		});
+		expect(
+			await rqb.query.shops.findFirst({ columns: { id: true }, with: { orders: { columns: { delivery: true } } } }),
+		).toEqual({ id: 1, orders: [{ delivery: { city: 'Potsdam' } }, { delivery: { city: null } }] });
+
+		await rqb.delete(shops).where(eq(shops.location.city, 'Lima'));
+	});
+
+	test('where filters by group columns', async () => {
+		await rqb.insert(shops).values({ location: { city: 'Lima', geo: { lat: -12 } } });
+		try {
+			const city = { location: { city: true } } as const;
+			expect(await rqb.query.shops.findMany({ where: { location: { city: 'Lima' } }, columns: city })).toEqual([
+				{ location: { city: 'Lima' } },
+			]);
+			expect(await rqb.query.shops.findMany({ where: { location: { geo: { lat: { gt: 0 } } } }, columns: city }))
+				.toEqual([{ location: { city: 'Berlin' } }]);
+			expect(
+				await rqb.query.shops.findMany({
+					where: { location: { OR: [{ city: 'Lima' }, { geo: { lat: 52 } }] } },
+					columns: city,
+					orderBy: { location: { city: 'asc' } },
+				}),
+			).toEqual([{ location: { city: 'Berlin' } }, { location: { city: 'Lima' } }]);
+			expect(
+				await rqb.query.orders.findMany({
+					where: { shop: { location: { city: 'Berlin' } }, delivery: { city: { isNotNull: true } } },
+					columns: { delivery: true },
+				}),
+			).toEqual([{ delivery: { city: 'Potsdam' } }]);
+		} finally {
+			await rqb.delete(shops).where(eq(shops.location.city, 'Lima'));
+		}
+	});
+
+	test('orderBy orders by group columns', async () => {
+		await rqb.insert(shops).values({ location: { city: 'Lima', geo: { lat: -12 } } });
+		try {
+			const city = { location: { city: true } } as const;
+			expect(await rqb.query.shops.findMany({ orderBy: { location: { geo: { lat: 'asc' } } }, columns: city }))
+				.toEqual([{ location: { city: 'Lima' } }, { location: { city: 'Berlin' } }]);
+			expect(await rqb.query.shops.findMany({ orderBy: { location: { city: 'desc' } }, columns: city })).toEqual([
+				{ location: { city: 'Lima' } },
+				{ location: { city: 'Berlin' } },
+			]);
+			expect(
+				await rqb.query.orders.findMany({
+					orderBy: { shop: { location: { city: 'asc' } }, id: 'desc' },
+					columns: { delivery: true },
+				}),
+			).toEqual([{ delivery: { city: null } }, { delivery: { city: 'Potsdam' } }]);
+		} finally {
+			await rqb.delete(shops).where(eq(shops.location.city, 'Lima'));
+		}
+	});
+});
+
+test('a relation cannot share its name with an embed() group', () => {
+	expect(() =>
+		defineRelations({ shops, orders }, (r) => ({
+			orders: { delivery: r.one.shops({ from: r.orders.shopId, to: r.shops.id }) },
+		}))
+	).toThrow('relation name collides with embed() group "delivery"');
 });

@@ -1,6 +1,8 @@
 import type { Equal } from 'type-tests/utils.ts';
 import { Expect } from 'type-tests/utils.ts';
+import { drizzle } from '~/node-postgres/index.ts';
 import { embed, integer, type PgColumn, pgTable, serial, text } from '~/pg-core/index.ts';
+import { defineRelations } from '~/relations.ts';
 import { eq } from '~/sql/expressions/index.ts';
 import type { InferInsertModel, InferSelectModel } from '~/table.ts';
 import { db } from './db.ts';
@@ -93,4 +95,38 @@ Expect<
 
 	const deleted = await db.delete(users).returning({ geo: users.address.geo });
 	Expect<Equal<typeof deleted, { geo: Address['geo'] }[]>>();
+}
+
+// Relational queries: `columns`, `where` and `orderBy` take groups nested, or their columns by dotted keys.
+{
+	const rqb = drizzle.mock({ relations: defineRelations({ users }) });
+
+	const whole = await rqb.query.users.findMany({ columns: { id: true, address: true } });
+	Expect<Equal<typeof whole, { id: number; address: Address }[]>>();
+
+	const part = await rqb.query.users.findMany({ columns: { address: { city: true, geo: { lat: true } } } });
+	Expect<Equal<typeof part, { address: { city: string; geo: { lat: number | null } } }[]>>();
+
+	const dotted = await rqb.query.users.findMany({ columns: { 'address.city': true } });
+	Expect<Equal<typeof dotted, { address: { city: string } }[]>>();
+
+	const excluded = await rqb.query.users.findMany({ columns: { address: false, name: false } });
+	Expect<Equal<typeof excluded, { id: number; note: { body: string | null } }[]>>();
+
+	const excludedPart = await rqb.query.users.findMany({ columns: { address: { geo: false }, note: false } });
+	Expect<
+		Equal<typeof excludedPart, { id: number; name: string; address: { street: string | null; city: string } }[]>
+	>();
+
+	await rqb.query.users.findMany({
+		where: { address: { city: 'Berlin', geo: { lat: { gt: 1 } }, OR: [{ street: { isNull: true } }] } },
+		orderBy: { address: { geo: { lat: 'desc' } }, id: 'asc' },
+	});
+
+	// @ts-expect-error - not a column of the group
+	await rqb.query.users.findMany({ columns: { address: { country: true } } });
+	// @ts-expect-error - the filter of a column is checked against its type
+	await rqb.query.users.findMany({ where: { address: { city: 1 } } });
+	// @ts-expect-error - not a column of the group
+	await rqb.query.users.findMany({ orderBy: { address: { country: 'asc' } } });
 }

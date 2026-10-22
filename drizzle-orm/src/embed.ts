@@ -281,6 +281,84 @@ export function hasEmbeddedRows(selection: BuildRelationalQueryResult['selection
 	return embeddedRowsPlan(selection, [EmbeddedKeySeparator]) !== undefined;
 }
 
+/**
+ * Whether `key` names an `embed()` group in a flat, dotted column map: `'address'` for
+ * `'address.city'`.
+ *
+ * @internal
+ */
+export function isEmbeddedGroupKey(columns: Record<string, unknown>, key: string): boolean {
+	const prefix = key + EmbeddedKeySeparator;
+	for (const column of Object.keys(columns)) {
+		if (column.startsWith(prefix)) return true;
+	}
+	return false;
+}
+
+/**
+ * Turns a relational query's `columns` config, which may name `embed()` groups, into one keyed by
+ * column: `{ address: true }` selects every column in the group, and `{ address: { city: true } }`
+ * becomes `{ 'address.city': true }`. Dotted keys are kept as they are.
+ *
+ * @internal
+ */
+export function flattenEmbeddedColumnsConfig(
+	columns: Record<string, unknown>,
+	config: Record<string, unknown>,
+	prefix = '',
+	result: Record<string, boolean | undefined> = {},
+): Record<string, boolean | undefined> {
+	for (const [key, value] of Object.entries(config)) {
+		const path = prefix + key;
+		if (Object.prototype.hasOwnProperty.call(columns, path) || !isEmbeddedGroupKey(columns, path)) {
+			result[path] = value as boolean | undefined;
+		} else if (isPlainObject(value)) {
+			flattenEmbeddedColumnsConfig(columns, value, path + EmbeddedKeySeparator, result);
+		} else {
+			const groupPrefix = path + EmbeddedKeySeparator;
+			for (const column of Object.keys(columns)) {
+				if (column.startsWith(groupPrefix)) result[column] = value as boolean | undefined;
+			}
+		}
+	}
+	return result;
+}
+
+/**
+ * Turns the filter a relational query's `where` gives an `embed()` group into one on the table's
+ * dotted keys: `{ city: 'Berlin', OR: [{ zip: '1' }] }` under `address` becomes
+ * `{ AND: [{ 'address.city': 'Berlin' }, { OR: [{ 'address.zip': '1' }] }] }`. `RAW` is passed the
+ * table, as at the top level.
+ *
+ * @internal
+ */
+export function prefixEmbeddedGroupFilter(filter: Record<string, unknown>, prefix: string): Record<string, unknown> {
+	const parts: Record<string, unknown>[] = [];
+	for (const [key, value] of Object.entries(filter)) {
+		switch (key) {
+			case 'RAW': {
+				parts.push({ RAW: value });
+				break;
+			}
+			case 'AND':
+			case 'OR': {
+				parts.push({
+					[key]: (value as Record<string, unknown>[]).map((sub) => prefixEmbeddedGroupFilter(sub, prefix)),
+				});
+				break;
+			}
+			case 'NOT': {
+				parts.push({ NOT: prefixEmbeddedGroupFilter(value as Record<string, unknown>, prefix) });
+				break;
+			}
+			default: {
+				parts.push({ [prefix + key]: value });
+			}
+		}
+	}
+	return parts.length ? { AND: parts } : {};
+}
+
 // ----------------------------------------------------------------------------- types
 
 type DottedKey = `${string}${typeof EmbeddedKeySeparator}${string}`;
@@ -292,6 +370,30 @@ type GroupKeys<T> = HeadOf<Extract<keyof T, DottedKey>>;
 type GroupOf<T, Head extends string> = {
 	[K in keyof T as K extends `${Head}.${infer Rest}` ? Rest : never]: T[K];
 };
+
+/** The names of the `embed()` groups in a flat, dotted map: `'address'` for `'address.city'`. */
+export type EmbeddedGroupKeys<T> = GroupKeys<T>;
+
+/** One `embed()` group of a flat, dotted map, keyed relative to it: `'address.geo.lat'` → `'geo.lat'`. */
+export type EmbeddedGroupOf<T, Head extends string> = GroupOf<T, Head>;
+
+/**
+ * Flattens a relational query's `columns` config into the dotted keys of the table's column map
+ * `TColumns`, mirroring {@link flattenEmbeddedColumnsConfig}: `{ address: { city: true } }` →
+ * `{ 'address.city': true }`, and `{ address: false }` → every column of the group set to `false`.
+ */
+export type FlattenEmbeddedColumnsConfig<TColumns, TConfig, TPrefix extends string = ''> = [keyof TConfig] extends
+	[never] ? {}
+	: Simplify<
+		UnionToIntersection<
+			{
+				[K in keyof TConfig & string]: `${TPrefix}${K}` extends keyof TColumns ? { [P in `${TPrefix}${K}`]: TConfig[K] }
+					: TConfig[K] extends Record<string, unknown>
+						? FlattenEmbeddedColumnsConfig<TColumns, TConfig[K], `${TPrefix}${K}.`>
+					: { [P in keyof TColumns & `${TPrefix}${K}.${string}`]: TConfig[K] };
+			}[keyof TConfig & string]
+		>
+	>;
 
 /**
  * Nests the dotted keys of a flat map into objects: `{ 'address.city': string }` →

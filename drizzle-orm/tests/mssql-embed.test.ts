@@ -366,4 +366,30 @@ describe.skipIf(!connectionString).each([
 			shop: { id: 1, location: { city: 'Berlin', geo: { lat: 52 } } },
 		}]);
 	});
+
+	test('columns, where and orderBy take groups nested', async () => {
+		expect(
+			await rqb.query.shops.findFirst({
+				columns: { location: { geo: true } },
+				where: { location: { city: 'Berlin', geo: { lat: { gt: 0 } } } },
+				with: {
+					orders: {
+						columns: { delivery: true },
+						where: { delivery: { city: { isNotNull: true } } },
+					},
+				},
+			}),
+		).toEqual({ location: { geo: { lat: 52 } }, orders: [{ delivery: { city: 'Potsdam' } }] });
+
+		expect(
+			await rqb.query.orders.findMany({
+				columns: { 'delivery.city': true },
+				where: { shop: { location: { city: 'Berlin' } } },
+				orderBy: { delivery: { city: 'asc' } },
+			}),
+		).toEqual(
+			// nulls sort first in ascending order
+			[{ delivery: { city: null } }, { delivery: { city: 'Potsdam' } }],
+		);
+	});
 });

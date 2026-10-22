@@ -1,7 +1,7 @@
 import { aliasedTable, getOriginalColumnFromAlias } from '~/alias.ts';
 import { CodecsCollection } from '~/codecs.ts';
 import { Column } from '~/column.ts';
-import { EmbeddedJsonKeySeparator, EmbeddedKeySeparator } from '~/embed.ts';
+import { EmbeddedJsonKeySeparator, EmbeddedKeySeparator, flattenEmbeddedColumnsConfig } from '~/embed.ts';
 import { entityKind, is } from '~/entity.ts';
 import type { MigrationConfig, MigrationMeta, MigratorInitFailResponse } from '~/migrator.ts';
 import { getMigrationsToRun } from '~/migrator.utils.ts';
@@ -1057,7 +1057,10 @@ export class MsSqlDialect {
 			tableConfig.name,
 			this.codecs,
 			collectTo,
-			nested && params?.columns ? jsonSafeEmbeddedKeys(params.columns) : params?.columns,
+			nested && params?.columns
+				// flattened first, so groups named in the config are renamed along with their columns
+				? jsonSafeEmbeddedKeys(flattenEmbeddedColumnsConfig(tableConfig.table[TableColumns], params.columns))
+				: params?.columns,
 		);
 		let selected = hasColumns ? 1 : 0;
 		if (params?.extras) {
