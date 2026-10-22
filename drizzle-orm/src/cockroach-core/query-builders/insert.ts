@@ -8,6 +8,7 @@ import type {
 	PreparedQueryConfig,
 } from '~/cockroach-core/session.ts';
 import type { CockroachTable, TableConfig } from '~/cockroach-core/table.ts';
+import { flattenEmbeddedValues, getTableShape, type NestEmbedded } from '~/embed.ts';
 import { entityKind, is } from '~/entity.ts';
 import type { TypedQueryBuilder } from '~/query-builders/query-builder.ts';
 import type { SelectResultFields } from '~/query-builders/select.types.ts';
@@ -44,12 +45,14 @@ export type CockroachInsertValue<
 	TColumnsList extends string[] | 'all' = 'all',
 	TModel extends Record<string, any> = InferInsertColumns<TTable, { dbColumnNames: false; override: OverrideT }>,
 > =
-	& {
-		[K in keyof TModel as TColumnsList extends 'all' ? K : Extract<K, TColumnsList[number]>]:
-			| TModel[K]
-			| SQL
-			| Placeholder;
-	}
+	& NestEmbedded<
+		{
+			[K in keyof TModel as TColumnsList extends 'all' ? K : Extract<K, TColumnsList[number]>]:
+				| TModel[K]
+				| SQL
+				| Placeholder;
+		}
+	>
 	& {};
 
 export type CockroachInsertSelection<
@@ -133,6 +136,7 @@ export class CockroachInsertBuilder<
 		if (values.length === 0) {
 			throw new Error('values() must be called with at least one value');
 		}
+		values = values.map((value) => flattenEmbeddedValues(this.table, value)) as typeof values;
 		return new CockroachInsertBase(
 			this.table,
 			values,
@@ -357,7 +361,7 @@ export class CockroachInsertBase<
 		fields: TSelectedFields,
 	): CockroachInsertWithout<CockroachInsertReturning<this, TDynamic, TSelectedFields>, TDynamic, 'returning'>;
 	returning(
-		fields: SelectedFieldsFlat = this.config.table[Table.Symbol.Columns],
+		fields: SelectedFieldsFlat = getTableShape(this.config.table) as SelectedFieldsFlat,
 	): CockroachInsertWithout<AnyCockroachInsert, TDynamic, 'returning'> {
 		this.config.returningFields = fields;
 		this.config.returning = orderSelectedFields<CockroachColumn>(

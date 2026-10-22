@@ -8,6 +8,7 @@ import type {
 } from '~/cockroach-core/session.ts';
 import { CockroachTable } from '~/cockroach-core/table.ts';
 import type { GetColumnData } from '~/column.ts';
+import { getTableShape, type NestEmbedded, type NestEmbeddedPartial } from '~/embed.ts';
 import { entityKind, is } from '~/entity.ts';
 import type { TypedQueryBuilder } from '~/query-builders/query-builder.ts';
 import type {
@@ -25,7 +26,7 @@ import type { RunnableQuery } from '~/runnable-query.ts';
 import { SelectionProxyHandler } from '~/selection-proxy.ts';
 import { type ColumnsSelection, type Placeholder, type Query, SQL, type SQLWrapper } from '~/sql/sql.ts';
 import { Subquery } from '~/subquery.ts';
-import { getTableName, type InferInsertColumns, Table } from '~/table.ts';
+import { getTableName, type InferInsertColumns, type Table } from '~/table.ts';
 import {
 	type Assume,
 	type Equal,
@@ -59,14 +60,16 @@ export interface CockroachUpdateConfig {
 }
 
 export type CockroachUpdateSetSource<TTable extends CockroachTable> =
-	& {
-		[Key in keyof InferInsertColumns<TTable>]?:
-			| GetColumnData<TTable['_']['columns'][Key]>
-			| SQL
-			| CockroachColumn
-			| Placeholder
-			| undefined;
-	}
+	& NestEmbeddedPartial<
+		{
+			[Key in keyof InferInsertColumns<TTable>]?:
+				| GetColumnData<TTable['_']['columns'][Key]>
+				| SQL
+				| CockroachColumn
+				| Placeholder
+				| undefined;
+		}
+	>
 	& {};
 
 export class CockroachUpdateBuilder<TTable extends CockroachTable, TQueryResult extends CockroachQueryResultHKT> {
@@ -156,8 +159,8 @@ export type CockroachUpdateJoinFn<
 	on:
 		| (
 			(
-				updateTable: T['_']['table']['_']['columns'],
-				from: T['_']['from'] extends CockroachTable ? T['_']['from']['_']['columns']
+				updateTable: NestEmbedded<T['_']['table']['_']['columns']>,
+				from: T['_']['from'] extends CockroachTable ? NestEmbedded<T['_']['from']['_']['columns']>
 					: T['_']['from'] extends Subquery | CockroachViewBase ? T['_']['from']['_']['selectedFields']
 					: never,
 			) => SQL | undefined
@@ -206,7 +209,7 @@ type AccumulateToResult<
 			T['_']['table']['_']['name'],
 			TSelectedFields,
 			TJoin['name'],
-			TJoin['table'] extends Table ? TJoin['table']['_']['columns']
+			TJoin['table'] extends Table ? NestEmbedded<TJoin['table']['_']['columns']>
 				: TJoin['table'] extends Subquery ? Assume<TJoin['table']['_']['selectedFields'], SelectedFields>
 				: never,
 			TSelectMode extends 'partial' ? TSelectMode : 'multiple'
@@ -220,11 +223,12 @@ export type CockroachUpdateReturningAll<T extends AnyCockroachUpdate, TDynamic e
 			T['_']['table'],
 			T['_']['queryResult'],
 			T['_']['from'],
-			Equal<T['_']['joins'], []> extends true ? T['_']['table']['_']['columns'] : Simplify<
-				& Record<T['_']['table']['_']['name'], T['_']['table']['_']['columns']>
+			Equal<T['_']['joins'], []> extends true ? NestEmbedded<T['_']['table']['_']['columns']> : Simplify<
+				& Record<T['_']['table']['_']['name'], NestEmbedded<T['_']['table']['_']['columns']>>
 				& {
-					[K in keyof T['_']['joins'] as T['_']['joins'][K]['table']['_']['name']]:
-						T['_']['joins'][K]['table']['_']['columns'];
+					[K in keyof T['_']['joins'] as T['_']['joins'][K]['table']['_']['name']]: NestEmbedded<
+						T['_']['joins'][K]['table']['_']['columns']
+					>;
 				}
 			>,
 			SelectResult<
@@ -405,7 +409,7 @@ export class CockroachUpdateBase<
 
 	private getTableLikeFields(table: CockroachTable | Subquery | CockroachViewBase): Record<string, unknown> {
 		if (is(table, CockroachTable)) {
-			return table[Table.Symbol.Columns];
+			return getTableShape(table);
 		} else if (is(table, Subquery)) {
 			return table._.selectedFields;
 		}
@@ -431,7 +435,7 @@ export class CockroachUpdateBase<
 					: undefined;
 				on = on(
 					new Proxy(
-						this.config.table[Table.Symbol.Columns],
+						getTableShape(this.config.table),
 						new SelectionProxyHandler({ sqlAliasedBehavior: 'sql', sqlBehavior: 'sql' }),
 					) as any,
 					from && new Proxy(
@@ -550,7 +554,7 @@ export class CockroachUpdateBase<
 		fields?: SelectedFields,
 	): CockroachUpdateWithout<AnyCockroachUpdate, TDynamic, 'returning'> {
 		if (!fields) {
-			fields = Object.assign({}, this.config.table[Table.Symbol.Columns]);
+			fields = Object.assign({}, getTableShape(this.config.table)) as SelectedFields;
 
 			if (this.config.from) {
 				const tableName = getTableLikeName(this.config.from);
