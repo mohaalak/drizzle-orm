@@ -1,4 +1,4 @@
-import { flattenEmbeddedValues, type NestEmbedded } from '~/embed.ts';
+import { EmbeddedKeySeparator, flattenEmbeddedValues, type NestEmbedded } from '~/embed.ts';
 import { entityKind, is } from '~/entity.ts';
 import { QueryPromise } from '~/query-promise.ts';
 import type { RunnableQuery } from '~/runnable-query.ts';
@@ -163,7 +163,7 @@ export type SingleStoreInsertReturning<
 	T['_']['table'],
 	T['_']['queryResult'],
 	T['_']['preparedQueryHKT'],
-	InferModelFromColumns<GetPrimarySerialOrDefaultKeys<T['_']['table']['_']['columns']>>,
+	NestEmbedded<InferModelFromColumns<GetPrimarySerialOrDefaultKeys<T['_']['table']['_']['columns']>>>,
 	TDynamic,
 	T['_']['excludedMethods'] | '$returning'
 >;
@@ -286,16 +286,24 @@ export class SingleStoreInsertBase<
 		'$returningId'
 	> {
 		const returning: SelectedFieldsOrdered = [];
+		let primaryInGroup = false;
 		for (const [key, value] of Object.entries(this.config.table[Table.Symbol.Columns])) {
 			if (value.primary) {
+				if (key.includes(EmbeddedKeySeparator)) primaryInGroup = true;
 				returning.push({ field: value, fieldType: 'Column', path: [key] });
 			}
 		}
-		this.config.returning = orderSelectedFields<SingleStoreColumn>(
-			this.config.table[Table.Symbol.Columns],
-			undefined,
-			this.dialect.codecs,
-		);
+		// No primary key inside an embed() group: keep every column. The mapper reports each
+		// value under the first column of this list, and tables without groups — composite keys
+		// included — depend on that being the table's first column. A grouped primary key is a
+		// dotted key (`'id.value'`), so the list above has to be the one that names it.
+		this.config.returning = primaryInGroup
+			? returning
+			: orderSelectedFields<SingleStoreColumn>(
+				this.config.table[Table.Symbol.Columns],
+				undefined,
+				this.dialect.codecs,
+			);
 		return this as any;
 	}
 

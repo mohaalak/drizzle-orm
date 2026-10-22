@@ -3,7 +3,7 @@ import type { Cache } from './cache/core/cache.ts';
 import type { CodecsCollection } from './codecs.ts';
 import type { AnyColumn } from './column.ts';
 import { Column } from './column.ts';
-import { flattenEmbeddedValues, getTableShape } from './embed.ts';
+import { flattenEmbeddedValues, getTableShape, nestReturningIdValue } from './embed.ts';
 import { is } from './entity.ts';
 import type { Logger } from './logger.ts';
 import type { SelectedFieldsFlat, SelectedFieldsOrdered } from './operations.ts';
@@ -343,15 +343,18 @@ export function make$ReturningResponseMapper(
 		let j = 0;
 		for (let i = insertId; i < insertId + affectedRows; i++) {
 			for (const column of returningIds) {
+				// The first returning column's key, for every column in the loop. Composite primary
+				// keys are reported under that key. `nestReturningIdValue` leaves a key with no dot
+				// as a flat property and nests an embed() key (`'id.value'` → `{ id: { value } }`).
 				const key = returningIds[0]!.path[0]!;
 				if (is(column.field, Column)) {
 					// @ts-ignore
 					if (column.field.primary && column.field.autoIncrement) {
-						returningResponse.push({ [key]: i });
+						returningResponse.push(nestReturningIdValue(key, i));
 					}
 					if (column.field.defaultFn && generatedIds) {
 						// generatedIds[rowIdx][key]
-						returningResponse.push({ [key]: generatedIds[j]![key] });
+						returningResponse.push(nestReturningIdValue(key, generatedIds[j]![key]));
 					}
 				}
 			}

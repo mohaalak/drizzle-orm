@@ -20,6 +20,7 @@ import {
 import { drizzle } from '~/mysql2';
 import { defineRelations } from '~/relations';
 import { asc, eq, sql } from '~/sql';
+import { make$ReturningResponseMapper } from '~/utils';
 
 // These tests run against a real MySQL server: set MYSQL_CONNECTION_STRING, for example
 // `mysql://root:mysql@127.0.0.1:33306/drizzle` for `docker run -e MYSQL_ROOT_PASSWORD=mysql -e MYSQL_DATABASE=drizzle -p 33306:3306 mysql:8`.
@@ -42,6 +43,22 @@ const users = mysqlTable('embed_users', {
 }, (t) => [index('embed_users_city_idx').on(t.address.city)]);
 
 const plain = mysqlTable('embed_plain', { id: serial().primaryKey(), cityId: int() });
+
+let nextReturningId = 0;
+const returningDefaultIds = ['aaa', 'bbb', 'ccc'];
+
+// `name` is first so the primary key is not the table's first column.
+const returningSerial = mysqlTable('embed_returning_serial', {
+	name: varchar({ length: 100 }).notNull(),
+	id: embed({ value: serial().primaryKey() }),
+});
+
+const returningDefault = mysqlTable('embed_returning_default', {
+	name: varchar({ length: 100 }).notNull(),
+	id: embed({
+		uuid: varchar({ length: 36 }).primaryKey().$defaultFn(() => returningDefaultIds[nextReturningId++]!),
+	}),
+});
 
 const src = mysqlTable('embed_src', {
 	name: varchar({ length: 100 }).notNull(),
@@ -113,6 +130,57 @@ describe('embed (no database)', () => {
 			'insert into `embed_users` (`id`, `name`, `address_street`, `address_city`, `address_geo_lat`, `address_geo_lng`, `billing_zip_code`) select 1',
 		);
 	});
+
+	test('$returningId mapper nests a group key and keeps a flat key', () => {
+		const flat = mysqlTable('embed_returning_flat', {
+			name: varchar({ length: 100 }).notNull(),
+			id: serial().primaryKey(),
+		});
+		// SingleStore passes every column, so the key is the table's first column even when
+		// the autoincrement primary key is a later one.
+		const flatMapper = make$ReturningResponseMapper([
+			{ field: flat.name, fieldType: 'Column', path: ['name'] },
+			{ field: flat.id, fieldType: 'Column', path: ['id'] },
+		]);
+		expect(flatMapper!({ insertId: 7, affectedRows: 1 })).toEqual([{ name: 7 }]);
+
+		const composite = mysqlTable('embed_returning_composite', {
+			orgId: int().primaryKey(),
+			id: serial().primaryKey(),
+		});
+		// MySQL passes primary keys only. The value still comes from the autoincrement column,
+		// and the key is still the first primary key.
+		const compositeMapper = make$ReturningResponseMapper([
+			{ field: composite.orgId, fieldType: 'Column', path: ['orgId'] },
+			{ field: composite.id, fieldType: 'Column', path: ['id'] },
+		]);
+		expect(compositeMapper!({ insertId: 4, affectedRows: 2 })).toEqual([{ orgId: 4 }, { orgId: 5 }]);
+
+		const groupedMapper = make$ReturningResponseMapper([
+			{ field: returningSerial.id.value, fieldType: 'Column', path: ['id.value'] },
+		]);
+		expect(groupedMapper!({ insertId: 7, affectedRows: 2 })).toEqual([
+			{ id: { value: 7 } },
+			{ id: { value: 8 } },
+		]);
+
+		const deep = mysqlTable('embed_returning_deep', {
+			meta: embed({ id: embed({ value: serial().primaryKey() }) }),
+		});
+		const deepMapper = make$ReturningResponseMapper([
+			{ field: deep.meta.id.value, fieldType: 'Column', path: ['meta.id.value'] },
+		]);
+		expect(deepMapper!({ insertId: 1, affectedRows: 1 })).toEqual([{ meta: { id: { value: 1 } } }]);
+
+		const defaultMapper = make$ReturningResponseMapper(
+			[{ field: returningDefault.id.uuid, fieldType: 'Column', path: ['id.uuid'] }],
+			[{ 'id.uuid': 'aaa' }, { 'id.uuid': 'explicit' }],
+		);
+		expect(defaultMapper!({ insertId: 0, affectedRows: 2 })).toEqual([
+			{ id: { uuid: 'aaa' } },
+			{ id: { uuid: 'explicit' } },
+		]);
+	});
 });
 
 describe.skipIf(!connectionString)('embed', () => {
@@ -125,6 +193,8 @@ describe.skipIf(!connectionString)('embed', () => {
 
 		await db.execute(sql`drop table if exists embed_users`);
 		await db.execute(sql`drop table if exists embed_plain`);
+		await db.execute(sql`drop table if exists embed_returning_serial`);
+		await db.execute(sql`drop table if exists embed_returning_default`);
 		await db.execute(sql`
 			create table embed_users (
 				id serial primary key,
@@ -137,11 +207,25 @@ describe.skipIf(!connectionString)('embed', () => {
 			)
 		`);
 		await db.execute(sql`create table embed_plain (id serial primary key, cityId int)`);
+		await db.execute(sql`
+			create table embed_returning_serial (
+				name varchar(100) not null,
+				id_value serial primary key
+			)
+		`);
+		await db.execute(sql`
+			create table embed_returning_default (
+				name varchar(100) not null,
+				id_uuid varchar(36) primary key
+			)
+		`);
 	});
 
 	afterAll(async () => {
 		await db.execute(sql`drop table if exists embed_users`);
 		await db.execute(sql`drop table if exists embed_plain`);
+		await db.execute(sql`drop table if exists embed_returning_serial`);
+		await db.execute(sql`drop table if exists embed_returning_default`);
 		await pool.end();
 	});
 
@@ -301,6 +385,32 @@ describe.skipIf(!connectionString)('embed', () => {
 		);
 		await db.insert(plain).values({ cityId: 7 });
 		expect(await db.select().from(plain)).toEqual([{ id: 1, cityId: 7 }]);
+	});
+
+	test('$returningId nests an autoincrement primary key inside a group', async () => {
+		const one = await db.insert(returningSerial).values({ name: 'Ada' }).$returningId();
+		expect(one).toStrictEqual([{ id: { value: 1 } }]);
+
+		const many = await db.insert(returningSerial).values([{ name: 'Bob' }, { name: 'Cara' }]).$returningId();
+		expect(many).toStrictEqual([{ id: { value: 2 } }, { id: { value: 3 } }]);
+
+		expect(
+			await db.select({ id: returningSerial.id }).from(returningSerial).orderBy(asc(returningSerial.id.value)),
+		).toEqual([{ id: { value: 1 } }, { id: { value: 2 } }, { id: { value: 3 } }]);
+	});
+
+	test('$returningId nests a $defaultFn primary key inside a group', async () => {
+		nextReturningId = 0;
+		const inserted = await db.insert(returningDefault).values([
+			{ name: 'Ada' },
+			{ name: 'Bob', id: { uuid: 'explicit' } },
+			{ name: 'Cara' },
+		]).$returningId();
+		expect(inserted).toStrictEqual([
+			{ id: { uuid: 'aaa' } },
+			{ id: { uuid: 'explicit' } },
+			{ id: { uuid: 'bbb' } },
+		]);
 	});
 
 	test('insert select writes the nested selection', async () => {
