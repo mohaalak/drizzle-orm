@@ -1,6 +1,6 @@
 import type { Equal } from 'type-tests/utils.ts';
 import { Expect } from 'type-tests/utils.ts';
-import { embed, int, type MySqlColumn, mysqlTable, QueryBuilder, serial, text } from '~/mysql-core/index.ts';
+import { embed, int, type MySqlColumn, mysqlTable, QueryBuilder, serial, text, varchar } from '~/mysql-core/index.ts';
 import { eq } from '~/sql/expressions/index.ts';
 import type { InferSelectModel } from '~/table.ts';
 import { db } from './db.ts';
@@ -129,4 +129,44 @@ Expect<
 		// @ts-expect-error - `address.street` is not included in the insert column selection
 		qb.select({ name: src.name, address: { city: src.city, street: src.city } }).from(src),
 	);
+}
+
+// `$returningId()` nests a primary key that lives inside an embed() group. A flat key stays flat.
+{
+	const grouped = mysqlTable('embed_returning_serial', {
+		name: text().notNull(),
+		id: embed({ value: serial().primaryKey() }),
+	});
+	const ids = await db.insert(grouped).values({ name: 'Ada' }).$returningId();
+	Expect<Equal<typeof ids, { id: { value: number } }[]>>();
+}
+
+{
+	const grouped = mysqlTable('embed_returning_default', {
+		name: text().notNull(),
+		id: embed({
+			uuid: varchar({ length: 36 }).primaryKey().$defaultFn(() => 'k'),
+		}),
+	});
+	const ids = await db.insert(grouped).values({ name: 'Ada' }).$returningId();
+	Expect<Equal<typeof ids, { id: { uuid: string } }[]>>();
+}
+
+{
+	const grouped = mysqlTable('embed_returning_deep', {
+		meta: embed({ id: embed({ value: serial().primaryKey() }) }),
+	});
+	const ids = await db.insert(grouped).values({}).$returningId();
+	Expect<Equal<typeof ids, { meta: { id: { value: number } } }[]>>();
+}
+
+{
+	const grouped = mysqlTable('embed_returning_mixed', {
+		id: serial().primaryKey(),
+		key: embed({
+			uuid: varchar({ length: 36 }).primaryKey().$defaultFn(() => 'k'),
+		}),
+	});
+	const ids = await db.insert(grouped).values({}).$returningId();
+	Expect<Equal<typeof ids, { id: number; key: { uuid: string } }[]>>();
 }

@@ -40,6 +40,22 @@ const users = singlestoreTable('embed_users', {
 
 const plain = singlestoreTable('embed_plain', { id: serial().primaryKey(), cityId: int() });
 
+let nextReturningId = 0;
+const returningDefaultIds = ['aaa', 'bbb', 'ccc'];
+
+// `name` is first so the primary key is not the table's first column.
+const returningSerial = singlestoreTable('embed_returning_serial', {
+	name: varchar({ length: 100 }).notNull(),
+	id: embed({ value: serial().primaryKey() }),
+});
+
+const returningDefault = singlestoreTable('embed_returning_default', {
+	name: varchar({ length: 100 }).notNull(),
+	id: embed({
+		uuid: varchar({ length: 36 }).primaryKey().$defaultFn(() => returningDefaultIds[nextReturningId++]!),
+	}),
+});
+
 const shops = singlestoreTable('embed_shops', {
 	id: serial().primaryKey(),
 	location: embed({ city: varchar({ length: 100 }).notNull(), geo: embed({ lat: int() }) }),
@@ -182,6 +198,8 @@ describe.skipIf(!connectionString)('embed', () => {
 
 		await db.execute(sql`drop table if exists embed_users`);
 		await db.execute(sql`drop table if exists embed_plain`);
+		await db.execute(sql`drop table if exists embed_returning_serial`);
+		await db.execute(sql`drop table if exists embed_returning_default`);
 		await db.execute(sql`
 			create table embed_users (
 				id serial primary key,
@@ -194,11 +212,25 @@ describe.skipIf(!connectionString)('embed', () => {
 			)
 		`);
 		await db.execute(sql`create table embed_plain (id serial primary key, cityId int)`);
+		await db.execute(sql`
+			create table embed_returning_serial (
+				name varchar(100) not null,
+				id_value serial primary key
+			)
+		`);
+		await db.execute(sql`
+			create table embed_returning_default (
+				name varchar(100) not null,
+				id_uuid varchar(36) primary key
+			)
+		`);
 	});
 
 	afterAll(async () => {
 		await db.execute(sql`drop table if exists embed_users`);
 		await db.execute(sql`drop table if exists embed_plain`);
+		await db.execute(sql`drop table if exists embed_returning_serial`);
+		await db.execute(sql`drop table if exists embed_returning_default`);
 		await client.end();
 	});
 
@@ -289,6 +321,32 @@ describe.skipIf(!connectionString)('embed', () => {
 	test('tables without groups are unaffected', async () => {
 		await db.insert(plain).values({ cityId: 7 });
 		expect(await db.select().from(plain)).toEqual([{ id: 1, cityId: 7 }]);
+	});
+
+	test('$returningId nests an autoincrement primary key inside a group', async () => {
+		const one = await db.insert(returningSerial).values({ name: 'Ada' }).$returningId();
+		expect(one).toStrictEqual([{ id: { value: 1 } }]);
+
+		const many = await db.insert(returningSerial).values([{ name: 'Bob' }, { name: 'Cara' }]).$returningId();
+		expect(many).toStrictEqual([{ id: { value: 2 } }, { id: { value: 3 } }]);
+
+		expect(
+			await db.select({ id: returningSerial.id }).from(returningSerial).orderBy(asc(returningSerial.id.value)),
+		).toEqual([{ id: { value: 1 } }, { id: { value: 2 } }, { id: { value: 3 } }]);
+	});
+
+	test('$returningId nests a $defaultFn primary key inside a group', async () => {
+		nextReturningId = 0;
+		const inserted = await db.insert(returningDefault).values([
+			{ name: 'Ada' },
+			{ name: 'Bob', id: { uuid: 'explicit' } },
+			{ name: 'Cara' },
+		]).$returningId();
+		expect(inserted).toStrictEqual([
+			{ id: { uuid: 'aaa' } },
+			{ id: { uuid: 'explicit' } },
+			{ id: { uuid: 'bbb' } },
+		]);
 	});
 });
 

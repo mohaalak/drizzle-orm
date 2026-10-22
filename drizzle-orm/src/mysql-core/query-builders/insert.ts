@@ -237,7 +237,9 @@ export type MySqlInsertReturning<T extends AnyMySqlInsert> = T extends any ? MyS
 			T['_']['hkt'],
 			T['_']['table'],
 			T['_']['queryResult'],
-			InferModelFromColumns<GetPrimarySerialOrDefaultKeys<T['_']['table']['_']['columns']>>,
+			NestEmbedded<
+				InferModelFromColumns<GetPrimarySerialOrDefaultKeys<T['_']['table']['_']['columns']>>
+			>,
 			T['_']['dynamic'],
 			T['_']['excludedMethods']
 		>,

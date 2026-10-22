@@ -1,6 +1,14 @@
 import type { Equal } from 'type-tests/utils.ts';
 import { Expect } from 'type-tests/utils.ts';
-import { embed, int, serial, type SingleStoreColumn, singlestoreTable, text } from '~/singlestore-core/index.ts';
+import {
+	embed,
+	int,
+	serial,
+	type SingleStoreColumn,
+	singlestoreTable,
+	text,
+	varchar,
+} from '~/singlestore-core/index.ts';
 import { eq } from '~/sql/expressions/index.ts';
 import type { InferSelectModel } from '~/table.ts';
 import { db } from './db.ts';
@@ -93,4 +101,44 @@ Expect<
 	const other = singlestoreTable('other_embed', { id: serial().primaryKey(), userId: int() });
 	const rows = await db.select().from(other).leftJoin(users, eq(other.userId, users.id));
 	Expect<Equal<typeof rows, { other_embed: { id: number; userId: number | null }; users_embed: User | null }[]>>();
+}
+
+// `$returningId()` nests a primary key that lives inside an embed() group. A flat key stays flat.
+{
+	const grouped = singlestoreTable('embed_returning_serial', {
+		name: text().notNull(),
+		id: embed({ value: serial().primaryKey() }),
+	});
+	const ids = await db.insert(grouped).values({ name: 'Ada' }).$returningId();
+	Expect<Equal<typeof ids, { id: { value: number } }[]>>();
+}
+
+{
+	const grouped = singlestoreTable('embed_returning_default', {
+		name: text().notNull(),
+		id: embed({
+			uuid: varchar({ length: 36 }).primaryKey().$defaultFn(() => 'k'),
+		}),
+	});
+	const ids = await db.insert(grouped).values({ name: 'Ada' }).$returningId();
+	Expect<Equal<typeof ids, { id: { uuid: string } }[]>>();
+}
+
+{
+	const grouped = singlestoreTable('embed_returning_deep', {
+		meta: embed({ id: embed({ value: serial().primaryKey() }) }),
+	});
+	const ids = await db.insert(grouped).values({}).$returningId();
+	Expect<Equal<typeof ids, { meta: { id: { value: number } } }[]>>();
+}
+
+{
+	const grouped = singlestoreTable('embed_returning_mixed', {
+		id: serial().primaryKey(),
+		key: embed({
+			uuid: varchar({ length: 36 }).primaryKey().$defaultFn(() => 'k'),
+		}),
+	});
+	const ids = await db.insert(grouped).values({}).$returningId();
+	Expect<Equal<typeof ids, { id: number; key: { uuid: string } }[]>>();
 }

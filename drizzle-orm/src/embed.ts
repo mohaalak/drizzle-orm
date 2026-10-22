@@ -159,6 +159,31 @@ export function hasEmbeddedColumns(table: Table): boolean {
 	return shape !== undefined && shape !== table[Table.Symbol.Columns];
 }
 
+/**
+ * The one-row object `$returningId()` builds for a column-map key.
+ *
+ * A table without groups uses a plain key, and this returns `{ [key]: value }` — the same object
+ * it has always returned, including when a composite primary key is reported under its first column.
+ * An `embed()` group stores the column under a dotted key (`'id.value'`), which comes back nested
+ * (`{ id: { value } }`).
+ *
+ * @internal
+ */
+export function nestReturningIdValue(key: string, value: unknown): Record<string, unknown> {
+	if (!key.includes(EmbeddedKeySeparator)) return { [key]: value };
+
+	const segments = key.split(EmbeddedKeySeparator);
+	const root: Record<string, unknown> = {};
+	let node = root;
+	for (let i = 0; i < segments.length - 1; i++) {
+		const next: Record<string, unknown> = {};
+		node[segments[i]!] = next;
+		node = next;
+	}
+	node[segments[segments.length - 1]!] = value;
+	return root;
+}
+
 function isPlainObject(value: unknown): value is Record<string, unknown> {
 	if (typeof value !== 'object' || value === null) return false;
 	const prototype = Object.getPrototypeOf(value);
