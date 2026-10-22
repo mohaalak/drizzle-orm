@@ -1,5 +1,6 @@
 import type { z } from 'zod/v4';
 import type { CockroachEnum } from '~/cockroach-core/columns/enum.ts';
+import type { NestEmbedded } from '~/embed.ts';
 import type { PgEnum } from '~/pg-core/columns/enum.ts';
 import type { InferInsertModel, InferSelectModel, Table } from '~/table.ts';
 import type { View } from '~/view.ts';
@@ -8,14 +9,16 @@ import type { BuildRefine, BuildSchema, NoUnknownKeys } from './schema.types.int
 export interface CreateSelectSchema<
 	TCoerce extends CoerceOptions,
 > {
-	<TTable extends Table>(table: TTable): BuildSchema<'select', TTable['_']['columns'], undefined, TCoerce>;
+	<TTable extends Table>(
+		table: TTable,
+	): BuildSchema<'select', NestEmbedded<TTable['_']['columns']>, undefined, TCoerce>;
 	<
 		TTable extends Table,
-		TRefine extends BuildRefine<TTable['_']['columns'], TCoerce>,
+		TRefine extends BuildRefine<NestEmbedded<TTable['_']['columns']>, TCoerce>,
 	>(
 		table: TTable,
 		refine?: NoUnknownKeys<TRefine, InferSelectModel<TTable>>,
-	): BuildSchema<'select', TTable['_']['columns'], TRefine, TCoerce>;
+	): BuildSchema<'select', NestEmbedded<TTable['_']['columns']>, TRefine, TCoerce>;
 
 	<TView extends View>(view: TView): BuildSchema<'select', TView['_']['selectedFields'], undefined, TCoerce>;
 	<
@@ -32,27 +35,31 @@ export interface CreateSelectSchema<
 export interface CreateInsertSchema<
 	TCoerce extends CoerceOptions,
 > {
-	<TTable extends Table>(table: TTable): BuildSchema<'insert', TTable['_']['columns'], undefined, TCoerce>;
+	<TTable extends Table>(
+		table: TTable,
+	): BuildSchema<'insert', NestEmbedded<TTable['_']['columns']>, undefined, TCoerce>;
 	<
 		TTable extends Table,
-		TRefine extends BuildRefine<Pick<TTable['_']['columns'], keyof InferInsertModel<TTable>>, TCoerce>,
+		TRefine extends BuildRefine<NestEmbedded<Pick<TTable['_']['columns'], keyof InferInsertModel<TTable>>>, TCoerce>,
 	>(
 		table: TTable,
-		refine?: NoUnknownKeys<TRefine, InferInsertModel<TTable>>,
-	): BuildSchema<'insert', TTable['_']['columns'], TRefine, TCoerce>;
+		refine?: NoUnknownKeys<TRefine, NestEmbedded<InferInsertModel<TTable>>>,
+	): BuildSchema<'insert', NestEmbedded<TTable['_']['columns']>, TRefine, TCoerce>;
 }
 
 export interface CreateUpdateSchema<
 	TCoerce extends CoerceOptions,
 > {
-	<TTable extends Table>(table: TTable): BuildSchema<'update', TTable['_']['columns'], undefined, TCoerce>;
+	<TTable extends Table>(
+		table: TTable,
+	): BuildSchema<'update', NestEmbedded<TTable['_']['columns']>, undefined, TCoerce>;
 	<
 		TTable extends Table,
-		TRefine extends BuildRefine<Pick<TTable['_']['columns'], keyof InferInsertModel<TTable>>, TCoerce>,
+		TRefine extends BuildRefine<NestEmbedded<Pick<TTable['_']['columns'], keyof InferInsertModel<TTable>>>, TCoerce>,
 	>(
 		table: TTable,
 		refine?: TRefine,
-	): BuildSchema<'update', TTable['_']['columns'], TRefine, TCoerce>;
+	): BuildSchema<'update', NestEmbedded<TTable['_']['columns']>, TRefine, TCoerce>;
 }
 
 export interface CreateSchemaFactoryOptions<

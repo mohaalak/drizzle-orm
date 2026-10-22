@@ -1,6 +1,7 @@
 import { type Equal, sql } from 'drizzle-orm';
 import {
 	customType,
+	embed,
 	integer,
 	json,
 	jsonb,
@@ -16,7 +17,7 @@ import { CONSTANTS } from 'drizzle-orm/utils';
 import { createInsertSchema, createSchemaFactory, createSelectSchema, createUpdateSchema } from 'drizzle-orm/zod';
 import { bigintStringModeSchema, jsonSchema } from 'drizzle-orm/zod/column';
 import type { TopLevelCondition } from 'json-rules-engine';
-import { test } from 'vitest';
+import { expect, test } from 'vitest';
 import { z } from 'zod/v4';
 import { Expect, expectEnumValues, expectSchemaShape } from './utils';
 
@@ -89,6 +90,101 @@ test('table - update', (t) => {
 	});
 	expectSchemaShape(t, expected).from(result);
 	Expect<Equal<typeof result, typeof expected>>();
+});
+
+const embedTable = pgTable('test', {
+	id: integer().generatedAlwaysAsIdentity().primaryKey(),
+	address: embed({
+		city: text().notNull(),
+		zip: integer(),
+		geo: embed({ lat: integer().notNull(), lng: integer().notNull() }),
+	}),
+	tags: embed({ main: text(), extra: text() }),
+});
+
+test('embedded columns - select', (t) => {
+	const result = createSelectSchema(embedTable);
+	const expected = z.object({
+		id: integerSchema,
+		address: z.object({
+			city: textSchema,
+			zip: integerNullableSchema,
+			geo: z.object({ lat: integerSchema, lng: integerSchema }),
+		}),
+		tags: z.object({ main: textSchema.nullable(), extra: textSchema.nullable() }),
+	});
+	expectSchemaShape(t, expected).from(result);
+	expectSchemaShape(t, expected.shape.address).from(result.shape.address);
+	expectSchemaShape(t, expected.shape.address.shape.geo).from(result.shape.address.shape.geo);
+	Expect<Equal<typeof result, typeof expected>>();
+
+	const row = {
+		id: 1,
+		address: { city: 'Berlin', zip: null, geo: { lat: 1, lng: 2 } },
+		tags: { main: 'a', extra: null },
+	};
+	expect(result.parse(row)).toStrictEqual(row);
+	expect(result.safeParse({ id: 1, 'address.city': 'Berlin' }).success).toBe(false);
+});
+
+test('embedded columns - insert', (t) => {
+	const result = createInsertSchema(embedTable);
+	const expected = z.object({
+		address: z.object({
+			city: textSchema,
+			zip: integerNullableOptionalSchema,
+			geo: z.object({ lat: integerSchema, lng: integerSchema }),
+		}),
+		tags: z.object({ main: textSchema.nullable().optional(), extra: textSchema.nullable().optional() }).optional(),
+	});
+	expectSchemaShape(t, expected).from(result);
+	expectSchemaShape(t, expected.shape.address).from(result.shape.address);
+	Expect<Equal<typeof result, typeof expected>>();
+
+	expect(result.safeParse({ address: { city: 'Berlin', geo: { lat: 1, lng: 2 } } }).success).toBe(true);
+	expect(result.safeParse({ address: { geo: { lat: 1, lng: 2 } } }).success).toBe(false);
+	expect(result.safeParse({}).success).toBe(false);
+});
+
+test('embedded columns - update', (t) => {
+	const result = createUpdateSchema(embedTable);
+	const expected = z.object({
+		address: z.object({
+			city: textOptionalSchema,
+			zip: integerNullableOptionalSchema,
+			geo: z.object({ lat: integerOptionalSchema, lng: integerOptionalSchema }).nullable().optional(),
+		}).nullable().optional(),
+		tags: z.object({ main: textSchema.nullable().optional(), extra: textSchema.nullable().optional() }).nullable()
+			.optional(),
+	});
+	expectSchemaShape(t, expected).from(result);
+	Expect<Equal<typeof result, typeof expected>>();
+
+	expect(result.safeParse({}).success).toBe(true);
+	expect(result.safeParse({ address: { geo: { lat: 3 } } }).success).toBe(true);
+	expect(result.safeParse({ tags: null }).success).toBe(true);
+});
+
+test('embedded columns - refine', (t) => {
+	const result = createInsertSchema(embedTable, {
+		address: { city: (schema) => schema.min(2), geo: { lat: z.string().transform(Number) } },
+	});
+	const expected = z.object({
+		address: z.object({
+			city: textSchema.min(2),
+			zip: integerNullableOptionalSchema,
+			geo: z.object({ lat: z.string().transform(Number), lng: integerSchema }),
+		}),
+		tags: z.object({ main: textSchema.nullable().optional(), extra: textSchema.nullable().optional() }).optional(),
+	});
+	expectSchemaShape(t, expected.shape.address).from(result.shape.address);
+	Expect<Equal<typeof result, typeof expected>>();
+
+	expect(result.safeParse({ address: { city: 'B', geo: { lat: '1', lng: 2 } } }).success).toBe(false);
+	expect(result.parse({ address: { city: 'Berlin', geo: { lat: '1', lng: 2 } } }).address.geo.lat).toBe(1);
+
+	// @ts-expect-error - unknown key in a group
+	createInsertSchema(embedTable, { address: { country: z.string() } });
 });
 
 test('view qb - select', (t) => {
