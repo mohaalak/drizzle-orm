@@ -1,18 +1,32 @@
 import type { Schema as s } from 'effect';
 import type { Struct, Top as SchemaTop, UndefinedOr } from 'effect/Schema';
 import type { Column } from '~/column.ts';
-import type { SelectedFieldsFlat } from '~/operations.ts';
+import type { SQL } from '~/sql/sql.ts';
+import type { Subquery } from '~/subquery.ts';
 import type { Table } from '~/table.ts';
 import type { Assume, DrizzleTypeError, Simplify } from '~/utils.ts';
 import type { View } from '~/view.ts';
-import type { ColumnIsGeneratedAlwaysAs, GetSelection } from '../utils.ts';
+import type { ColumnIsGeneratedAlwaysAs } from '../utils.ts';
 import type { GetEffectSchemaType, HandleColumn } from './column.types.ts';
 
 export interface Conditions {
 	never: (column?: Column) => boolean;
 	optional: (column: Column) => boolean;
 	nullable: (column: Column) => boolean;
+	/** Wraps the object schema of an `embed()` group */
+	group: (schema: SchemaTop) => SchemaTop;
 }
+
+/** A nested selection: a table, a view, or an object of fields, such as a table's `embed()` group */
+type NestedSelection = Record<string, any>;
+
+type GetNestedSelection<T> = T extends Table<any> ? T['_']['columns']
+	: T extends View ? T['_']['selectedFields']
+	: T;
+
+type IsNestedSelection<T> = T extends Column | SQL | SQL.Aliased | Subquery ? false
+	: T extends NestedSelection ? true
+	: false;
 
 type BuildRefineField<T> = T extends SchemaTop ? ((schema: T) => SchemaTop) | SchemaTop
 	: never;
@@ -20,9 +34,9 @@ type BuildRefineField<T> = T extends SchemaTop ? ((schema: T) => SchemaTop) | Sc
 export type BuildRefine<
 	TColumns extends Record<string, any>,
 > = {
-	[K in keyof TColumns as TColumns[K] extends Column | SelectedFieldsFlat<Column> | Table | View ? K : never]?:
+	[K in keyof TColumns as TColumns[K] extends Column ? K : IsNestedSelection<TColumns[K]> extends true ? K : never]?:
 		TColumns[K] extends Column ? BuildRefineField<GetEffectSchemaType<TColumns[K]>>
-			: BuildRefine<GetSelection<TColumns[K]>>;
+			: BuildRefine<GetNestedSelection<TColumns[K]>>;
 };
 
 type HandleRefinement<
@@ -60,15 +74,36 @@ export type BuildSchema<
 						SchemaTop | s.optional<SchemaTop> | s.optionalKey<SchemaTop>
 					>
 				: HandleColumn<TType, TColumn>
-				: TColumns[K] extends infer TObject extends SelectedFieldsFlat<Column> | Table | View ? BuildSchema<
+				: IsNestedSelection<TColumns[K]> extends true ? BuildGroup<
 						TType,
-						GetSelection<TObject>,
-						TRefinements extends object ? TRefinements[K & keyof TRefinements] : undefined
+						BuildSchema<
+							TType,
+							GetNestedSelection<TColumns[K]>,
+							TRefinements extends object ? K extends keyof TRefinements ? TRefinements[K] : undefined
+								: undefined
+						>
 					>
 				: typeof s.Any;
 		}
 	>
 >;
+
+/**
+ * Nested objects only reach insert and update schemas as tables' `embed()` groups: an insert can
+ * leave out a group whose fields are all optional, and an update can also set it to `null`.
+ */
+type BuildGroup<TType extends 'select' | 'insert' | 'update', TSchema extends Struct<any>> = TType extends 'update'
+	? s.optional<UndefinedOr<s.NullOr<TSchema>>>
+	: TType extends 'insert' ? EveryFieldOptional<TSchema['fields']> extends true ? s.optional<UndefinedOr<TSchema>>
+		: TSchema
+	: TSchema;
+
+/** True when every field of a struct is key-optional, so an insert can leave the group out. */
+type EveryFieldOptional<TFields> = [keyof TFields] extends [never] ? true
+	: {
+		[K in keyof TFields]: TFields[K] extends { readonly '~type.optionality': 'optional' } ? true : false;
+	}[keyof TFields] extends true ? true
+	: false;
 
 export type NoUnknownKeys<
 	TRefinement extends Record<string, any>,
