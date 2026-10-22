@@ -17,7 +17,7 @@ import { SelectionProxyHandler } from '~/selection-proxy.ts';
 import type { ColumnsSelection, Placeholder, Query, SQLWrapper } from '~/sql/sql.ts';
 import { SQL, sql } from '~/sql/sql.ts';
 import type { Subquery } from '~/subquery.ts';
-import type { InferInsertModel } from '~/table.ts';
+import type { InferInsertColumns } from '~/table.ts';
 import { getTableName, Table } from '~/table.ts';
 import { tracer } from '~/tracing.ts';
 import { type DrizzleTypeError, mapUpdateSet, orderSelectedFields } from '~/utils.ts';
@@ -42,7 +42,7 @@ export type CockroachInsertValue<
 	TTable extends CockroachTable<TableConfig>,
 	OverrideT extends boolean = false,
 	TColumnsList extends string[] | 'all' = 'all',
-	TModel extends Record<string, any> = InferInsertModel<TTable, { dbColumnNames: false; override: OverrideT }>,
+	TModel extends Record<string, any> = InferInsertColumns<TTable, { dbColumnNames: false; override: OverrideT }>,
 > =
 	& {
 		[K in keyof TModel as TColumnsList extends 'all' ? K : Extract<K, TColumnsList[number]>]:
@@ -55,7 +55,7 @@ export type CockroachInsertValue<
 export type CockroachInsertSelection<
 	TTable extends CockroachTable<TableConfig>,
 	TColumnsList extends string[] | 'all' = 'all',
-	TModel extends Record<string, unknown> = InferInsertModel<TTable>,
+	TModel extends Record<string, unknown> = InferInsertColumns<TTable>,
 > =
 	& {
 		[K in keyof TModel as TColumnsList extends 'all' ? K : Extract<K, TColumnsList[number]>]:
@@ -80,8 +80,8 @@ export type ValidateInsertSelectionKey<
 	TTable extends CockroachTable<TableConfig>,
 	TSelection extends CockroachInsertSelection<any>,
 	K extends keyof TSelection,
-> = K extends keyof InferInsertModel<TTable> ? TSelection[K]
-	: K extends keyof InferInsertModel<TTable, { override: true }> ? DrizzleTypeError<
+> = K extends keyof InferInsertColumns<TTable> ? TSelection[K]
+	: K extends keyof InferInsertColumns<TTable, { override: true }> ? DrizzleTypeError<
 			`Column "${
 				& K
 				& string}" in table "${TTable['_'][

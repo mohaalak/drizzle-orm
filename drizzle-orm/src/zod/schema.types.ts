@@ -2,7 +2,7 @@ import type { z } from 'zod/v4';
 import type { CockroachEnum } from '~/cockroach-core/columns/enum.ts';
 import type { NestEmbedded } from '~/embed.ts';
 import type { PgEnum } from '~/pg-core/columns/enum.ts';
-import type { InferInsertModel, InferSelectModel, Table } from '~/table.ts';
+import type { InferInsertColumns, InferInsertModel, InferSelectModel, Table } from '~/table.ts';
 import type { View } from '~/view.ts';
 import type { BuildRefine, BuildSchema, NoUnknownKeys } from './schema.types.internal.ts';
 
@@ -40,10 +40,10 @@ export interface CreateInsertSchema<
 	): BuildSchema<'insert', NestEmbedded<TTable['_']['columns']>, undefined, TCoerce>;
 	<
 		TTable extends Table,
-		TRefine extends BuildRefine<NestEmbedded<Pick<TTable['_']['columns'], keyof InferInsertModel<TTable>>>, TCoerce>,
+		TRefine extends BuildRefine<NestEmbedded<Pick<TTable['_']['columns'], keyof InferInsertColumns<TTable>>>, TCoerce>,
 	>(
 		table: TTable,
-		refine?: NoUnknownKeys<TRefine, NestEmbedded<InferInsertModel<TTable>>>,
+		refine?: NoUnknownKeys<TRefine, InferInsertModel<TTable>>,
 	): BuildSchema<'insert', NestEmbedded<TTable['_']['columns']>, TRefine, TCoerce>;
 }
 
@@ -55,7 +55,7 @@ export interface CreateUpdateSchema<
 	): BuildSchema<'update', NestEmbedded<TTable['_']['columns']>, undefined, TCoerce>;
 	<
 		TTable extends Table,
-		TRefine extends BuildRefine<NestEmbedded<Pick<TTable['_']['columns'], keyof InferInsertModel<TTable>>>, TCoerce>,
+		TRefine extends BuildRefine<NestEmbedded<Pick<TTable['_']['columns'], keyof InferInsertColumns<TTable>>>, TCoerce>,
 	>(
 		table: TTable,
 		refine?: TRefine,

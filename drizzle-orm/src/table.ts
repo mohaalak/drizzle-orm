@@ -252,7 +252,17 @@ export type InferSelectModel<
 	TTable extends Table,
 > = NestEmbedded<InferModelFromColumns<TTable['_']['columns'], 'select'>>;
 
+/** What a table takes on insert, with `embed()` groups nested. */
 export type InferInsertModel<
+	TTable extends Table,
+	TOverride extends { override?: boolean } = { override: false },
+> = NestEmbedded<InferInsertColumns<TTable, TOverride>>;
+
+/**
+ * {@link InferInsertModel} keyed by column: the columns of an `embed()` group stay under their dotted keys
+ * (`'address.city'`), as in the table's column map.
+ */
+export type InferInsertColumns<
 	TTable extends Table,
 	TOverride extends { override?: boolean } = { override: false },
 > = InferModelFromColumns<TTable['_']['columns'], 'insert', TOverride>;

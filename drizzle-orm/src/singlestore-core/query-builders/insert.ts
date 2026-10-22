@@ -14,7 +14,7 @@ import type {
 import type { SingleStoreTable } from '~/singlestore-core/table.ts';
 import type { Placeholder, Query, SQL, SQLWrapper } from '~/sql/sql.ts';
 import { sql } from '~/sql/sql.ts';
-import type { InferInsertModel, InferModelFromColumns } from '~/table.ts';
+import type { InferInsertColumns, InferModelFromColumns } from '~/table.ts';
 import { Table } from '~/table.ts';
 import { usedTablesOf } from '~/used-tables.ts';
 import { type DrizzleTypeError, mapUpdateSet, orderSelectedFields } from '~/utils.ts';
@@ -36,7 +36,7 @@ export type AnySingleStoreInsertConfig = SingleStoreInsertConfig<SingleStoreTabl
 export type SingleStoreInsertValue<
 	TTable extends SingleStoreTable,
 	TColumnsList extends string[] | 'all' = 'all',
-	TModel extends Record<string, any> = InferInsertModel<TTable>,
+	TModel extends Record<string, any> = InferInsertColumns<TTable>,
 > =
 	& {
 		[K in keyof TModel as TColumnsList extends 'all' ? K : Extract<K, TColumnsList[number]>]:

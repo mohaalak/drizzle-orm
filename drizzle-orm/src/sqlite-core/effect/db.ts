@@ -22,7 +22,7 @@ import { SQLiteSelectBuilder } from '~/sqlite-core/query-builders/select.ts';
 import { SQLiteUpdateBuilder } from '~/sqlite-core/query-builders/update.ts';
 import type { SQLiteTable } from '~/sqlite-core/table.ts';
 import { WithSubquery } from '~/subquery.ts';
-import type { InferInsertModel, RequiredInsertKeys } from '~/table.ts';
+import type { InferInsertColumns, RequiredInsertKeys } from '~/table.ts';
 import type { DrizzleTypeError, IsNever, JoinUnion } from '~/utils.ts';
 import { QueryBuilder } from '../query-builders/query-builder.ts';
 import type { SelectedFields } from '../query-builders/select.types.ts';
@@ -336,7 +336,7 @@ export class SQLiteEffectDatabase<
 		 */
 		function insert<
 			TTable extends SQLiteTable,
-			TColumnList extends (keyof InferInsertModel<TTable>)[] = [],
+			TColumnList extends (keyof InferInsertColumns<TTable>)[] = [],
 			TRequiredKeys extends string = RequiredInsertKeys<TTable>,
 		>(
 			into: TTable,
@@ -546,7 +546,7 @@ export class SQLiteEffectDatabase<
 	 */
 	insert<
 		TTable extends SQLiteTable,
-		TColumnList extends (keyof InferInsertModel<TTable>)[] = [],
+		TColumnList extends (keyof InferInsertColumns<TTable>)[] = [],
 		TRequiredKeys extends string = RequiredInsertKeys<TTable>,
 	>(
 		into: TTable,

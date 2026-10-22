@@ -8,7 +8,7 @@ import type { MySqlTable } from '~/mysql-core/table.ts';
 import { SelectionProxyHandler } from '~/selection-proxy.ts';
 import { type CommentInput, type Placeholder, type Query, type SQL, sql, type SQLWrapper } from '~/sql/sql.ts';
 import type { Subquery } from '~/subquery.ts';
-import type { InferInsertModel } from '~/table.ts';
+import type { InferInsertColumns } from '~/table.ts';
 import { type Assume, mapUpdateSet, type UpdateSet, type ValueOrArray } from '~/utils.ts';
 import type { MySqlColumn } from '../columns/common.ts';
 
@@ -24,7 +24,7 @@ export interface MySqlUpdateConfig {
 
 export type MySqlUpdateSetSource<
 	TTable extends MySqlTable,
-	TModel extends Record<string, any> = InferInsertModel<TTable>,
+	TModel extends Record<string, any> = InferInsertColumns<TTable>,
 > =
 	& NestEmbeddedPartial<
 		{

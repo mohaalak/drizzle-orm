@@ -21,7 +21,7 @@ import {
 import type { SQLiteTransactionConfig } from '~/sqlite-core/session.ts';
 import type { SQLiteTable } from '~/sqlite-core/table.ts';
 import { WithSubquery } from '~/subquery.ts';
-import type { InferInsertModel, RequiredInsertKeys } from '~/table.ts';
+import type { InferInsertColumns, RequiredInsertKeys } from '~/table.ts';
 import type { DrizzleTypeError, IsNever, JoinUnion } from '~/utils.ts';
 import { RelationalQueryBuilder } from '../query-builders/query.ts';
 import type { SelectedFields } from '../query-builders/select.types.ts';
@@ -343,7 +343,7 @@ export class SQLiteAsyncDatabase<
 		 */
 		function insert<
 			TTable extends SQLiteTable,
-			TColumnList extends (keyof InferInsertModel<TTable>)[] = [],
+			TColumnList extends (keyof InferInsertColumns<TTable>)[] = [],
 			TRequiredKeys extends string = RequiredInsertKeys<TTable>,
 		>(
 			into: TTable,
@@ -551,7 +551,7 @@ export class SQLiteAsyncDatabase<
 	 */
 	insert<
 		TTable extends SQLiteTable,
-		TColumnList extends (keyof InferInsertModel<TTable>)[] = [],
+		TColumnList extends (keyof InferInsertColumns<TTable>)[] = [],
 		TRequiredKeys extends string = RequiredInsertKeys<TTable>,
 	>(
 		into: TTable,

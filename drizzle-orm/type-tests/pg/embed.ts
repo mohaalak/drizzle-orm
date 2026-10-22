@@ -2,7 +2,7 @@ import type { Equal } from 'type-tests/utils.ts';
 import { Expect } from 'type-tests/utils.ts';
 import { embed, integer, type PgColumn, pgTable, serial, text } from '~/pg-core/index.ts';
 import { eq } from '~/sql/expressions/index.ts';
-import type { InferSelectModel } from '~/table.ts';
+import type { InferInsertModel, InferSelectModel } from '~/table.ts';
 import { db } from './db.ts';
 
 const users = pgTable('users_embed', {
@@ -31,6 +31,7 @@ users['address.city'];
 
 Expect<Equal<typeof users.$inferSelect, User>>();
 Expect<Equal<InferSelectModel<typeof users>, User>>();
+Expect<Equal<InferInsertModel<typeof users>, typeof users.$inferInsert>>();
 
 // A group is required on insert when any column in it is; one whose columns are all optional may be left out.
 Expect<

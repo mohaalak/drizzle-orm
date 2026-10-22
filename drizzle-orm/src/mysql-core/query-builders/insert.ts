@@ -7,7 +7,7 @@ import type { MySqlTable } from '~/mysql-core/table.ts';
 import type { TypedQueryBuilder } from '~/query-builders/query-builder.ts';
 import type { CommentInput, Placeholder, Query, SQLWrapper } from '~/sql/sql.ts';
 import { SQL, sql } from '~/sql/sql.ts';
-import type { InferInsertModel, InferModelFromColumns } from '~/table.ts';
+import type { InferInsertColumns, InferModelFromColumns } from '~/table.ts';
 import { Table } from '~/table.ts';
 import { type Assume, type DrizzleTypeError, mapUpdateSet } from '~/utils.ts';
 import type { AnyMySqlColumn } from '../columns/common.ts';
@@ -31,7 +31,7 @@ export type AnyMySqlInsertConfig = MySqlInsertConfig<MySqlTable>;
 export type MySqlInsertValue<
 	TTable extends MySqlTable,
 	TColumnsList extends string[] | 'all' = 'all',
-	TModel extends Record<string, any> = InferInsertModel<TTable>,
+	TModel extends Record<string, any> = InferInsertColumns<TTable>,
 > =
 	& NestEmbedded<
 		{
@@ -46,7 +46,7 @@ export type MySqlInsertValue<
 export type MySqlInsertSelection<
 	TTable extends MySqlTable,
 	TColumnsList extends string[] | 'all' = 'all',
-	TModel extends Record<string, unknown> = InferInsertModel<TTable>,
+	TModel extends Record<string, unknown> = InferInsertColumns<TTable>,
 > =
 	& {
 		[K in keyof TModel as TColumnsList extends 'all' ? K : Extract<K, TColumnsList[number]>]:
@@ -71,8 +71,8 @@ export type ValidateInsertSelectionKey<
 	TTable extends MySqlTable,
 	TSelection extends MySqlInsertSelection<any>,
 	K extends keyof TSelection,
-> = K extends keyof InferInsertModel<TTable> ? TSelection[K]
-	: K extends keyof InferInsertModel<TTable, { override: true }> ? DrizzleTypeError<
+> = K extends keyof InferInsertColumns<TTable> ? TSelection[K]
+	: K extends keyof InferInsertColumns<TTable, { override: true }> ? DrizzleTypeError<
 			`Column "${
 				& K
 				& string}" in table "${TTable['_'][

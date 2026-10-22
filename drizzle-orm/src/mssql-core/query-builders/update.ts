@@ -15,7 +15,7 @@ import type { SelectResultFields } from '~/query-builders/select.types.ts';
 import { QueryPromise } from '~/query-promise.ts';
 import type { ExtractObjectValues } from '~/relations.ts';
 import type { Placeholder, Query, SQL, SQLWrapper } from '~/sql/sql.ts';
-import { type InferInsertModel, Table } from '~/table.ts';
+import { type InferInsertColumns, Table } from '~/table.ts';
 import { mapUpdateSet, orderSelectedFields, type UpdateSet } from '~/utils.ts';
 import type { MsSqlColumn } from '../columns/common.ts';
 import type { SelectedFieldsFlatUpdate, SelectedFieldsOrdered } from './select.types.ts';
@@ -33,7 +33,7 @@ export interface MsSqlUpdateConfig {
 
 export type MsSqlUpdateSetSource<TTable extends MsSqlTable> =
 	& {
-		[Key in keyof InferInsertModel<TTable>]?:
+		[Key in keyof InferInsertColumns<TTable>]?:
 			| GetColumnData<TTable['_']['columns'][Key], 'query'>
 			| Placeholder
 			| SQL;
