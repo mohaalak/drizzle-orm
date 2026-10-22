@@ -29,7 +29,7 @@ function handleColumns(
 
 	for (const [key, selected] of Object.entries(columns)) {
 		if (!is(selected, Column) && !is(selected, SQL) && !is(selected, SQL.Aliased) && typeof selected === 'object') {
-			const columns = isTable(selected) || isView(selected) ? getColumns(selected) : selected;
+			const columns = isTable(selected) ? getTableShape(selected) : isView(selected) ? getColumns(selected) : selected;
 			const nested = handleColumns(columns, refinements[key] ?? {}, conditions, factory);
 			columnSchemas[key] = is(selected, EmbeddedColumns) ? conditions.group(nested) : nested;
 			continue;

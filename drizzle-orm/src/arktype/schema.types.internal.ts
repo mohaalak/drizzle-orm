@@ -1,5 +1,6 @@
 import type { Type, type } from 'arktype';
 import type { Column } from '~/column.ts';
+import type { NestEmbedded } from '~/embed.ts';
 import type { SQL } from '~/sql/sql.ts';
 import type { Subquery } from '~/subquery.ts';
 import type { Table } from '~/table.ts';
@@ -19,7 +20,7 @@ export interface Conditions {
 /** A nested selection: a table, a view, or an object of fields, such as a table's `embed()` group */
 type NestedSelection = Record<string, any>;
 
-type GetNestedSelection<T> = T extends Table<any> ? T['_']['columns']
+type GetNestedSelection<T> = T extends Table<any> ? NestEmbedded<T['_']['columns']>
 	: T extends View ? T['_']['selectedFields']
 	: T;
 

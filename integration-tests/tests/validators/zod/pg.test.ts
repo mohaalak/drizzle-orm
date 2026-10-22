@@ -187,6 +187,25 @@ test('embedded columns - refine', (t) => {
 	createInsertSchema(embedTable, { address: { country: z.string() } });
 });
 
+test('embedded columns - view selecting a table', (t) => {
+	const view = pgView('test_view').as((qb) => qb.select({ user: embedTable }).from(embedTable));
+
+	const result = createSelectSchema(view);
+	const expected = z.object({
+		user: z.object({
+			id: integerSchema,
+			address: z.object({
+				city: textSchema,
+				zip: integerNullableSchema,
+				geo: z.object({ lat: integerSchema, lng: integerSchema }),
+			}),
+			tags: z.object({ main: textSchema.nullable(), extra: textSchema.nullable() }),
+		}),
+	});
+	expectSchemaShape(t, expected.shape.user).from(result.shape.user);
+	Expect<Equal<typeof result, typeof expected>>();
+});
+
 test('view qb - select', (t) => {
 	const table = pgTable('test', {
 		id: serial().primaryKey(),

@@ -1,5 +1,6 @@
 import type * as v from 'valibot';
 import type { Column } from '~/column.ts';
+import type { NestEmbedded } from '~/embed.ts';
 import type { SQL } from '~/sql/sql.ts';
 import type { Subquery } from '~/subquery.ts';
 import type { Table } from '~/table.ts';
@@ -19,7 +20,7 @@ export interface Conditions {
 /** A nested selection: a table, a view, or an object of fields, such as a table's `embed()` group */
 type NestedSelection = Record<string, any>;
 
-type GetNestedSelection<T> = T extends Table<any> ? T['_']['columns']
+type GetNestedSelection<T> = T extends Table<any> ? NestEmbedded<T['_']['columns']>
 	: T extends View ? T['_']['selectedFields']
 	: T;
 
@@ -61,36 +62,28 @@ export type BuildSchema<
 	TColumns extends Record<string, any>,
 	TRefinements extends Record<string, any> | undefined,
 > =
-	// ObjectSchema's entries constraint expands a generic nested selection without bound.
-	// A concrete table or view still resolves to its object schema.
-	// @ts-expect-error
-	v.ObjectSchema<
-		Simplify<
-			{
-				readonly [
-					K in keyof TColumns as ColumnIsGeneratedAlwaysAs<TColumns[K]> extends true ? TType extends 'select' ? K
-						: never
-						: K
-				]: TColumns[K] extends infer TColumn extends Column
-					? IsRefinementDefined<TRefinements, Assume<K, string>> extends true
-						? Assume<HandleRefinement<TType, TRefinements[K & keyof TRefinements], TColumn>, v.GenericSchema>
-					: HandleColumn<TType, TColumn>
-					: IsNestedSelection<TColumns[K]> extends true
-					// @ts-expect-error
-						? BuildGroup<
-							TType,
-							BuildSchema<
-								TType,
-								GetNestedSelection<TColumns[K]>,
-								TRefinements extends object ? K extends keyof TRefinements ? TRefinements[K] : undefined
-									: undefined
-							>
-						>
-					: v.AnySchema;
-			}
-		>,
-		undefined
-	>;
+	// Checked against `ObjectEntries` through `infer`, so a generic nested selection is not expanded
+	Simplify<
+		{
+			readonly [
+				K in keyof TColumns as ColumnIsGeneratedAlwaysAs<TColumns[K]> extends true ? TType extends 'select' ? K
+					: never
+					: K
+			]: TColumns[K] extends infer TColumn extends Column
+				? IsRefinementDefined<TRefinements, Assume<K, string>> extends true
+					? Assume<HandleRefinement<TType, TRefinements[K & keyof TRefinements], TColumn>, v.GenericSchema>
+				: HandleColumn<TType, TColumn>
+				: IsNestedSelection<TColumns[K]> extends true ? BuildSchema<
+						TType,
+						GetNestedSelection<TColumns[K]>,
+						TRefinements extends object ? K extends keyof TRefinements ? TRefinements[K] : undefined
+							: undefined
+					> extends infer TNested extends v.GenericSchema ? BuildGroup<TType, TNested>
+					: never
+				: v.AnySchema;
+		}
+	> extends infer TEntries extends v.ObjectEntries ? v.ObjectSchema<TEntries, undefined>
+		: never;
 
 /**
  * Nested objects only reach insert and update schemas as tables' `embed()` groups: an insert can

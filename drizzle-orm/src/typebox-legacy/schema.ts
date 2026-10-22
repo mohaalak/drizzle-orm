@@ -1,6 +1,5 @@
 import { OptionalKind, Type as t } from '@sinclair/typebox';
 import type { TObject, TSchema } from '@sinclair/typebox';
-import { Value } from '@sinclair/typebox/value';
 import { Column } from '~/column.ts';
 import { EmbeddedColumns, getTableShape } from '~/embed.ts';
 import { is } from '~/entity.ts';
@@ -29,7 +28,7 @@ export function handleColumns(
 
 	for (const [key, selected] of Object.entries(columns)) {
 		if (!is(selected, Column) && !is(selected, SQL) && !is(selected, SQL.Aliased) && typeof selected === 'object') {
-			const columns = isTable(selected) || isView(selected) ? getColumns(selected) : selected;
+			const columns = isTable(selected) ? getTableShape(selected) : isView(selected) ? getColumns(selected) : selected;
 			const nested = handleColumns(columns, refinements[key] ?? {}, conditions, factory);
 			columnSchemas[key] = is(selected, EmbeddedColumns) ? conditions.group(nested) : nested;
 			continue;
@@ -71,11 +70,12 @@ export function handleEnum(enum_: PgEnum<any>, factory?: CreateSchemaFactoryOpti
 }
 
 /**
- * `Type.Optional` is a property modifier. `Value.Check` ignores it, so an optional field still
- * rejects `undefined` unless the modifier is read off the schema.
+ * `Type.Optional` is a property modifier that `Value.Check` ignores, so it is read off the schema.
+ * Only the modifier counts, as in the types: a required field whose schema accepts `undefined`
+ * still makes its group required.
  */
-function fieldAcceptsUndefined(field: TSchema): boolean {
-	return field[OptionalKind] === 'Optional' || Value.Check(field, undefined);
+function isOptionalField(field: TSchema): boolean {
+	return field[OptionalKind] === 'Optional';
 }
 
 const selectConditions: Conditions = {
@@ -91,9 +91,8 @@ const insertConditions: Conditions = {
 		|| ('identity' in (column ?? {}) && typeof (column as any)?.identity !== 'undefined'),
 	optional: (column) => !column.notNull || (column.notNull && column.hasDefault),
 	nullable: (column) => !column.notNull,
-	// A group can be left out when every field in it accepts undefined
-	group: (schema) =>
-		Object.values((schema as TObject).properties).every(fieldAcceptsUndefined) ? t.Optional(schema) : schema,
+	// A group can be left out when every field in it is optional
+	group: (schema) => Object.values((schema as TObject).properties).every(isOptionalField) ? t.Optional(schema) : schema,
 };
 
 const updateConditions: Conditions = {
