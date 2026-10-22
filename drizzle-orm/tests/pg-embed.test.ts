@@ -170,6 +170,15 @@ describe('embed', () => {
 			'insert into "plain" ("id", "cityId") values (default, $1)',
 		);
 	});
+
+	test('nests a selected table in subqueries', async () => {
+		await db.insert(users).values({ name: 'Sub', address: { city: 'Lyon', geo: { lat: 4 } } });
+		const sq = db.select({ user: users }).from(users).where(eq(users.name, 'Sub')).as('sq');
+
+		expect(sq.user.address.geo.lat.name).toBe('address_geo_lat');
+		const rows = await db.select({ city: sq.user.address.city, lat: sq.user.address.geo.lat }).from(sq);
+		expect(rows).toStrictEqual([{ city: 'Lyon', lat: 4 }]);
+	});
 });
 
 const shops = pgTable('shops', {
