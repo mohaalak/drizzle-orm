@@ -1,3 +1,4 @@
+import type { NestEmbedded } from '~/embed.ts';
 import type { MySqlColumn } from '~/mysql-core/columns/index.ts';
 import type { MySqlTable, MySqlTableWithColumns } from '~/mysql-core/table.ts';
 import type {
@@ -104,7 +105,7 @@ export type MySqlJoin<
 				T['_']['tableName'],
 				T['_']['selection'],
 				TJoinedName,
-				TJoinedTable extends MySqlTable ? TJoinedTable['_']['columns']
+				TJoinedTable extends MySqlTable ? NestEmbedded<TJoinedTable['_']['columns']>
 					: TJoinedTable extends Subquery | View ? Assume<TJoinedTable['_']['selectedFields'], SelectedFields>
 					: never,
 				T['_']['selectMode']

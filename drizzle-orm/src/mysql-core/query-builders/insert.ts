@@ -1,3 +1,4 @@
+import { flattenEmbeddedValues, type NestEmbedded } from '~/embed.ts';
 import { entityKind, is } from '~/entity.ts';
 import type { MySqlDialect } from '~/mysql-core/dialect.ts';
 import type { AnyMySqlQueryResultHKT, MySqlQueryResultHKT, MySqlQueryResultKind } from '~/mysql-core/session.ts';
@@ -32,12 +33,14 @@ export type MySqlInsertValue<
 	TColumnsList extends string[] | 'all' = 'all',
 	TModel extends Record<string, any> = InferInsertModel<TTable>,
 > =
-	& {
-		[K in keyof TModel as TColumnsList extends 'all' ? K : Extract<K, TColumnsList[number]>]:
-			| TModel[K]
-			| SQL
-			| Placeholder;
-	}
+	& NestEmbedded<
+		{
+			[K in keyof TModel as TColumnsList extends 'all' ? K : Extract<K, TColumnsList[number]>]:
+				| TModel[K]
+				| SQL
+				| Placeholder;
+		}
+	>
 	& {};
 
 export type MySqlInsertSelection<
@@ -136,6 +139,7 @@ export class MySqlInsertBuilder<
 		if (values.length === 0) {
 			throw new Error('values() must be called with at least one value');
 		}
+		values = values.map((value) => flattenEmbeddedValues(this.table, value)) as typeof values;
 		return new this.builder(
 			this.table,
 			values,
