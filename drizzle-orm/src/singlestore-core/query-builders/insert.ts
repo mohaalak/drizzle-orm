@@ -1,3 +1,4 @@
+import { flattenEmbeddedValues, type NestEmbedded } from '~/embed.ts';
 import { entityKind, is } from '~/entity.ts';
 import { QueryPromise } from '~/query-promise.ts';
 import type { RunnableQuery } from '~/runnable-query.ts';
@@ -38,12 +39,14 @@ export type SingleStoreInsertValue<
 	TColumnsList extends string[] | 'all' = 'all',
 	TModel extends Record<string, any> = InferInsertColumns<TTable>,
 > =
-	& {
-		[K in keyof TModel as TColumnsList extends 'all' ? K : Extract<K, TColumnsList[number]>]:
-			| TModel[K]
-			| SQL
-			| Placeholder;
-	}
+	& NestEmbedded<
+		{
+			[K in keyof TModel as TColumnsList extends 'all' ? K : Extract<K, TColumnsList[number]>]:
+				| TModel[K]
+				| SQL
+				| Placeholder;
+		}
+	>
 	& {};
 
 export type NoDuplicateColumns<
@@ -94,6 +97,7 @@ export class SingleStoreInsertBuilder<
 		if (values.length === 0) {
 			throw new Error('values() must be called with at least one value');
 		}
+		values = values.map((value) => flattenEmbeddedValues(this.table, value)) as typeof values;
 		return new SingleStoreInsertBase(
 			this.table,
 			values,
