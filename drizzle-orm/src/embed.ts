@@ -11,6 +11,13 @@ import type { Simplify } from './utils.ts';
  */
 export const EmbeddedKeySeparator = '.';
 
+/**
+ * Stands in for {@link EmbeddedKeySeparator} in the keys of columns a dialect selects inside a JSON
+ * object, where a `.` in a key would be read as a path (SQL Server's `for json path`).
+ * Relational rows nest both the same way.
+ */
+export const EmbeddedJsonKeySeparator = '→';
+
 export interface EmbedConfig {
 	/**
 	 * Prepended to the database name of every column in the group that does not set its own name.
@@ -196,6 +203,8 @@ export function flattenEmbeddedValues(table: Table, value: Record<string, unknow
 	return result;
 }
 
+const embeddedKeySegments = new RegExp(`[${EmbeddedKeySeparator}${EmbeddedJsonKeySeparator}]`);
+
 interface EmbeddedRowsPlan {
 	/** Columns selected under a dotted key, as the path to nest each one at. */
 	readonly columns: readonly (readonly [key: string, path: readonly string[]])[];
@@ -211,8 +220,11 @@ function embeddedRowsPlan(selection: BuildRelationalQueryResult['selection']): E
 		if (item.selection) {
 			const plan = embeddedRowsPlan(item.selection);
 			if (plan) relations.push([item.key, plan]);
-		} else if (item.fieldType === 'Column' && item.key.includes(EmbeddedKeySeparator)) {
-			columns.push([item.key, item.key.split(EmbeddedKeySeparator)]);
+		} else if (
+			item.fieldType === 'Column'
+			&& (item.key.includes(EmbeddedKeySeparator) || item.key.includes(EmbeddedJsonKeySeparator))
+		) {
+			columns.push([item.key, item.key.split(embeddedKeySegments)]);
 		}
 	}
 

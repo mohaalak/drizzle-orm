@@ -1,4 +1,5 @@
 import type { GetColumnData } from '~/column.ts';
+import { getTableShape, type NestEmbedded, type NestEmbeddedPartial } from '~/embed.ts';
 import { entityKind, is } from '~/entity.ts';
 import type { MsSqlDialect } from '~/mssql-core/dialect.ts';
 import type {
@@ -15,10 +16,10 @@ import type { SelectResultFields } from '~/query-builders/select.types.ts';
 import { QueryPromise } from '~/query-promise.ts';
 import type { ExtractObjectValues } from '~/relations.ts';
 import type { Placeholder, Query, SQL, SQLWrapper } from '~/sql/sql.ts';
-import { type InferInsertColumns, Table } from '~/table.ts';
+import type { InferInsertColumns } from '~/table.ts';
 import { mapUpdateSet, orderSelectedFields, type UpdateSet } from '~/utils.ts';
 import type { MsSqlColumn } from '../columns/common.ts';
-import type { SelectedFieldsFlatUpdate, SelectedFieldsOrdered } from './select.types.ts';
+import type { SelectedFieldsFlat, SelectedFieldsFlatUpdate, SelectedFieldsOrdered } from './select.types.ts';
 
 export interface MsSqlUpdateConfig {
 	where?: SQL | undefined;
@@ -32,12 +33,14 @@ export interface MsSqlUpdateConfig {
 }
 
 export type MsSqlUpdateSetSource<TTable extends MsSqlTable> =
-	& {
-		[Key in keyof InferInsertColumns<TTable>]?:
-			| GetColumnData<TTable['_']['columns'][Key], 'query'>
-			| Placeholder
-			| SQL;
-	}
+	& NestEmbeddedPartial<
+		{
+			[Key in keyof InferInsertColumns<TTable>]?:
+				| GetColumnData<TTable['_']['columns'][Key], 'query'>
+				| Placeholder
+				| SQL;
+		}
+	>
 	& {};
 
 export type NonUndefinedKeysOnly<T> =
@@ -49,7 +52,7 @@ export type NonUndefinedKeysOnly<T> =
 	& keyof T;
 
 export type FormSelection<T, TTable extends MsSqlTable> = {
-	[K in keyof T as T[K] extends undefined ? never : K]: T[K] extends true ? TTable['_']['columns'] : T[K];
+	[K in keyof T as T[K] extends undefined ? never : K]: T[K] extends true ? NestEmbedded<TTable['_']['columns']> : T[K];
 };
 
 export type MsSqlUpdateReturning<
@@ -270,7 +273,7 @@ export class MsSqlUpdateBase<
 	output(
 		fields?: SelectedFieldsFlatUpdate,
 	): MsSqlUpdateWithout<AnyMsSqlUpdateBase, TDynamic, 'output'> {
-		const columns = this.config.table[Table.Symbol.Columns];
+		const columns = getTableShape(this.config.table) as SelectedFieldsFlat;
 
 		if (fields) {
 			const output: typeof this.config.output = {};

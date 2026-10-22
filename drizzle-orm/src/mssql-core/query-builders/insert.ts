@@ -1,3 +1,4 @@
+import { flattenEmbeddedValues, getTableShape, type NestEmbedded } from '~/embed.ts';
 import { entityKind, is } from '~/entity.ts';
 import type { MsSqlDialect } from '~/mssql-core/dialect.ts';
 import type {
@@ -35,12 +36,14 @@ export type MsSqlInsertValue<
 	TColumnsList extends string[] | 'all' = 'all',
 	TModel extends Record<string, any> = InferInsertColumns<TTable>,
 > =
-	& {
-		[K in keyof TModel as TColumnsList extends 'all' ? K : Extract<K, TColumnsList[number]>]:
-			| TModel[K]
-			| SQL
-			| Placeholder;
-	}
+	& NestEmbedded<
+		{
+			[K in keyof TModel as TColumnsList extends 'all' ? K : Extract<K, TColumnsList[number]>]:
+				| TModel[K]
+				| SQL
+				| Placeholder;
+		}
+	>
 	& {};
 
 export type MsSqlInsertSelection<
@@ -134,6 +137,7 @@ export class MsSqlInsertBuilder<
 		if (values.length === 0) {
 			throw new Error('values() must be called with at least one value');
 		}
+		values = values.map((value) => flattenEmbeddedValues(this.table, value)) as typeof values;
 		return new MsSqlInsertBase(
 			this.table,
 			values,
@@ -214,7 +218,7 @@ export class MsSqlInsertBuilder<
 		fields: SelectedFields,
 	): Omit<MsSqlInsertBuilder<TTable, TQueryResult, TPreparedQueryHKT, SelectResultFields<SelectedFields>>, 'output'>;
 	output(
-		fields: SelectedFieldsFlat = this.table[Table.Symbol.Columns],
+		fields: SelectedFieldsFlat = getTableShape(this.table) as SelectedFieldsFlat,
 	) {
 		this.config.output = orderSelectedFields<MsSqlColumn>(fields, undefined, this.dialect.codecs);
 		return this as any;

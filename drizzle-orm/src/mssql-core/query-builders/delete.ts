@@ -1,3 +1,4 @@
+import { getTableShape } from '~/embed.ts';
 import { entityKind } from '~/entity.ts';
 import type { MsSqlDialect } from '~/mssql-core/dialect.ts';
 import type {
@@ -13,7 +14,6 @@ import type { MsSqlTable } from '~/mssql-core/table.ts';
 import type { SelectResultFields } from '~/query-builders/select.types.ts';
 import { QueryPromise } from '~/query-promise.ts';
 import type { Query, SQL, SQLWrapper } from '~/sql/sql.ts';
-import { Table } from '~/table.ts';
 import { orderSelectedFields } from '~/utils.ts';
 import type { MsSqlColumn } from '../columns/common.ts';
 import type { SelectedFieldsFlat, SelectedFieldsOrdered } from './select.types.ts';
@@ -200,7 +200,7 @@ export class MsSqlDeleteBase<
 		fields: TSelectedFields,
 	): MsSqlDeleteReturning<this, TDynamic, TSelectedFields>;
 	output(
-		fields: SelectedFieldsFlat = this.config.table[Table.Symbol.Columns],
+		fields: SelectedFieldsFlat = getTableShape(this.config.table) as SelectedFieldsFlat,
 	): MsSqlDeleteWithout<AnyMsSqlDeleteBase, TDynamic, 'output'> {
 		this.config.output = orderSelectedFields<MsSqlColumn>(fields, undefined, this.dialect.codecs);
 		return this as any;

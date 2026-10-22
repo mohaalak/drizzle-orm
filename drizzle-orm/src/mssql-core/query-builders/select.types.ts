@@ -1,3 +1,4 @@
+import type { NestEmbedded } from '~/embed.ts';
 import type { MsSqlColumn } from '~/mssql-core/columns/index.ts';
 import type { MsSqlTable, MsSqlTableWithColumns } from '~/mssql-core/table.ts';
 import type {
@@ -106,7 +107,7 @@ export type MsSqlJoin<
 				T['_']['tableName'],
 				T['_']['selection'],
 				TJoinedName,
-				TJoinedTable extends MsSqlTable ? TJoinedTable['_']['columns']
+				TJoinedTable extends MsSqlTable ? NestEmbedded<TJoinedTable['_']['columns']>
 					: TJoinedTable extends Subquery | View ? Assume<TJoinedTable['_']['selectedFields'], SelectedFields>
 					: never,
 				T['_']['selectMode']

@@ -1,6 +1,7 @@
 import { aliasedTable, getOriginalColumnFromAlias } from '~/alias.ts';
 import { CodecsCollection } from '~/codecs.ts';
 import { Column } from '~/column.ts';
+import { EmbeddedJsonKeySeparator, EmbeddedKeySeparator } from '~/embed.ts';
 import { entityKind, is } from '~/entity.ts';
 import type { MigrationConfig, MigrationMeta, MigratorInitFailResponse } from '~/migrator.ts';
 import { getMigrationsToRun } from '~/migrator.utils.ts';
@@ -81,6 +82,19 @@ const rqbChunks = {
 	forJsonMany: new StringChunk(' for json path, include_null_values) '),
 	applyColumn: new StringChunk('([j])'),
 } as const;
+
+/**
+ * `for json path` reads a `.` in a column alias as a path and nests the value, which would hide
+ * `embed()` columns (keyed `'address.city'`) from the rows mapper: rename their keys.
+ */
+function jsonSafeEmbeddedKeys<T>(columns: Record<string, T>): Record<string, T> {
+	const keys = Object.keys(columns);
+	if (!keys.some((key) => key.includes(EmbeddedKeySeparator))) return columns;
+
+	return Object.fromEntries(
+		keys.map((key) => [key.replaceAll(EmbeddedKeySeparator, EmbeddedJsonKeySeparator), columns[key]!]),
+	);
+}
 
 export class MsSqlDialect {
 	static readonly [entityKind]: string = 'MsSqlDialect';
@@ -1037,13 +1051,13 @@ export class MsSqlDialect {
 		collectTo.push(commonStringChunks[' ']);
 		const hasColumns = buildRqbColumns(
 			tableRef,
-			tableConfig.table[TableColumns],
+			nested ? jsonSafeEmbeddedKeys(tableConfig.table[TableColumns]) : tableConfig.table[TableColumns],
 			selection,
 			!!nested,
 			tableConfig.name,
 			this.codecs,
 			collectTo,
-			params?.columns,
+			nested && params?.columns ? jsonSafeEmbeddedKeys(params.columns) : params?.columns,
 		);
 		let selected = hasColumns ? 1 : 0;
 		if (params?.extras) {
