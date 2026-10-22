@@ -2,8 +2,11 @@ import type { ColumnBuilderBase } from './column-builder.ts';
 import type { Column } from './column.ts';
 import { entityKind, is } from './entity.ts';
 import type { BuildRelationalQueryResult, RelationalRowsMapper } from './relations.ts';
+import type { SQL } from './sql/sql.ts';
+import { isSQLWrapper } from './sql/sql.ts';
+import type { Subquery } from './subquery.ts';
 import { Table } from './table.ts';
-import type { Simplify } from './utils.ts';
+import type { DrizzleTypeError, Simplify } from './utils.ts';
 
 /**
  * Separates the segments of an embedded column's key in the table's flat column map:
@@ -160,6 +163,58 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 	if (typeof value !== 'object' || value === null) return false;
 	const prototype = Object.getPrototypeOf(value);
 	return prototype === Object.prototype || prototype === null;
+}
+
+/**
+ * Reads one selected field. `getSelectedFields()` is a proxy that throws when a field is raw SQL
+ * without an alias; that field is a leaf, and an insert only needs its key.
+ */
+function readSelectedField(fields: Record<string, unknown>, key: string): unknown {
+	try {
+		return fields[key];
+	} catch {
+		return undefined;
+	}
+}
+
+/**
+ * A nested plain object or an {@link EmbeddedColumns} group is walked. A column, SQL value,
+ * subquery, view, or any other SQL wrapper is a leaf. A table is not a leaf: its shape is.
+ */
+function isSelectedFieldGroup(field: unknown): boolean {
+	if (is(field, EmbeddedColumns)) return true;
+	if (!isPlainObject(field) || isSQLWrapper(field)) return false;
+	return true;
+}
+
+/**
+ * Flattens a selection's fields to dotted keys, depth-first in key order — the order
+ * {@link orderSelectedFields} emits columns in the SELECT — so an `insert().select()` lines its
+ * columns up with the selected values.
+ *
+ * `{ address: { city, geo: { lat } } }` becomes `'address.city'`, then `'address.geo.lat'`.
+ *
+ * @internal
+ */
+export function flattenSelectedFields(
+	fields: Record<string, unknown>,
+	prefix = '',
+	result: Record<string, unknown> = {},
+): Record<string, unknown> {
+	for (const key of Object.keys(fields)) {
+		const path = prefix === '' ? key : prefix + EmbeddedKeySeparator + key;
+		const field = readSelectedField(fields, key);
+		if (is(field, Table)) {
+			flattenSelectedFields(getTableShape(field), path, result);
+			continue;
+		}
+		if (isSelectedFieldGroup(field)) {
+			flattenSelectedFields(field as Record<string, unknown>, path, result);
+			continue;
+		}
+		result[path] = field;
+	}
+	return result;
 }
 
 /**
@@ -419,6 +474,127 @@ export type NestEmbeddedPartial<T> =
 	& { [K in keyof T as K extends DottedKey ? never : K]?: T[K] }
 	// Writing `null` to a group clears every column in it.
 	& { [Head in GroupKeys<T>]?: NestEmbeddedPartial<GroupOf<T, Head>> | null };
+
+/**
+ * The columns of `TModel` an insert column list keeps. `'all'` keeps every key. Optionality is preserved,
+ * so a required column stays required in an `insert().select()` selection.
+ */
+export type ListedInsertColumns<TModel, TColumnList extends string[] | 'all'> = {
+	[K in keyof TModel as TColumnList extends string[] ? Extract<K, TColumnList[number]> : K]: TModel[K];
+};
+
+type InsertSelectionLeaf<TColumn, TData> = TColumn | SQL | SQL.Aliased | TData;
+
+type InsertSelectionLeaves<TModel, TColumn> = {
+	[K in keyof TModel]: InsertSelectionLeaf<TColumn, TModel[K]>;
+};
+
+/**
+ * What `insert().select()` accepts for one table: the insert columns, either under their dotted keys
+ * (`'address.city'`) or nested the way `embed()` groups are (`address: { city }`). A required column
+ * has to appear in one of those two shapes.
+ */
+export type InsertSelectionShape<TModel, TColumn> =
+	| (InsertSelectionLeaves<TModel, TColumn> & {})
+	| NestEmbedded<InsertSelectionLeaves<TModel, TColumn>>;
+
+/** How a dialect reports a generated or identity column an insert may not write. */
+export type InsertSelectionGeneratedKind = 'override' | 'restricted' | 'none';
+
+type HasEmbeddedGroup<T, THead extends string> = [Extract<keyof T, `${THead}.${string}`>] extends [never] ? false
+	: true;
+
+type InsertSelectionGeneratedError<
+	TPath extends string,
+	TTableName extends string,
+	TKind extends InsertSelectionGeneratedKind,
+> = TKind extends 'override' ? DrizzleTypeError<
+		`Column "${TPath}" in table "${TTableName}" is a generated column. Use \`.overridingSystemValue()\` to manually insert into this column`
+	>
+	: TKind extends 'restricted' ? DrizzleTypeError<
+			`Column "${TPath}" in table "${TTableName}" is a generated column - manual value insertion restricted`
+		>
+	: DrizzleTypeError<`Column "${TPath}" does not exist in table "${TTableName}"`>;
+
+type IsInsertSelectionGroup<TValue> = [TValue] extends [Column | SQL | SQL.Aliased | Subquery] ? false
+	: [TValue] extends [Record<string, any>] ? true
+	: false;
+
+type ValidateInsertSelectionEntry<
+	TValue,
+	TPath extends string,
+	TAllowed extends Record<string, unknown>,
+	TGenerated extends Record<string, unknown>,
+	TColumnList extends string[] | 'all',
+	TTableName extends string,
+	TKind extends InsertSelectionGeneratedKind,
+> = TPath extends keyof TAllowed ? TColumnList extends string[] ? TPath extends TColumnList[number] ? TValue
+		: DrizzleTypeError<`Column "${TPath}" is not included in the insert column selection`>
+	: TValue
+	: TPath extends keyof TGenerated ? InsertSelectionGeneratedError<TPath, TTableName, TKind>
+	: HasEmbeddedGroup<TAllowed, TPath> extends true ? ValidateInsertSelectionGroup<
+			TValue,
+			TPath,
+			TAllowed,
+			TGenerated,
+			TColumnList,
+			TTableName,
+			TKind
+		>
+	: HasEmbeddedGroup<TGenerated, TPath> extends true ? ValidateInsertSelectionGroup<
+			TValue,
+			TPath,
+			TAllowed,
+			TGenerated,
+			TColumnList,
+			TTableName,
+			TKind
+		>
+	: DrizzleTypeError<`Column "${TPath}" does not exist in table "${TTableName}"`>;
+
+type ValidateInsertSelectionGroup<
+	TValue,
+	TPath extends string,
+	TAllowed extends Record<string, unknown>,
+	TGenerated extends Record<string, unknown>,
+	TColumnList extends string[] | 'all',
+	TTableName extends string,
+	TKind extends InsertSelectionGeneratedKind,
+> = IsInsertSelectionGroup<TValue> extends true ? ValidateNestedInsertSelection<
+		TValue,
+		TAllowed,
+		TGenerated,
+		TColumnList,
+		TTableName,
+		TKind,
+		`${TPath}.`
+	>
+	: DrizzleTypeError<`Column "${TPath}" does not exist in table "${TTableName}"`>;
+
+/**
+ * Checks an `insert().select()` selection against the table's insert columns. Dotted keys and nested
+ * `embed()` groups are both checked per column: an unknown key, a generated column, or a key outside
+ * the insert column list becomes a {@link DrizzleTypeError} in place, named by its dotted path.
+ */
+export type ValidateNestedInsertSelection<
+	TSelection,
+	TAllowed extends Record<string, unknown>,
+	TGenerated extends Record<string, unknown>,
+	TColumnList extends string[] | 'all',
+	TTableName extends string,
+	TKind extends InsertSelectionGeneratedKind,
+	TPrefix extends string = '',
+> = {
+	[K in keyof TSelection]: ValidateInsertSelectionEntry<
+		TSelection[K],
+		`${TPrefix}${K & string}`,
+		TAllowed,
+		TGenerated,
+		TColumnList,
+		TTableName,
+		TKind
+	>;
+};
 
 /**
  * Flattens a table definition's `embed()` groups into dotted keys, mirroring

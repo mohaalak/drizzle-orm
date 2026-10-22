@@ -1,6 +1,6 @@
 import type { Equal } from 'type-tests/utils.ts';
 import { Expect } from 'type-tests/utils.ts';
-import { alias, embed, int, type MsSqlColumn, mssqlTable, text } from '~/mssql-core/index.ts';
+import { alias, embed, int, type MsSqlColumn, mssqlTable, QueryBuilder, text } from '~/mssql-core/index.ts';
 import { eq } from '~/sql/expressions/index.ts';
 import type { InferSelectModel } from '~/table.ts';
 import { db } from './db.ts';
@@ -112,4 +112,40 @@ Expect<
 	const other = alias(users, 'other');
 	const rows = await db.select({ city: other.address.city, lat: other.address.geo.lat }).from(other);
 	Expect<Equal<typeof rows, { city: string; lat: number | null }[]>>();
+}
+
+// `insert().select()` takes embed() groups nested, the same way `values()` does, and still takes dotted keys.
+{
+	const qb = new QueryBuilder();
+	const src = mssqlTable('src_embed', {
+		name: text().notNull(),
+		city: text().notNull(),
+		lat: int(),
+	});
+
+	db.insert(users).select(
+		qb.select({ name: src.name, address: { city: src.city, geo: { lat: src.lat } } }).from(src),
+	);
+	db.insert(users).select((qb) => qb.select({ name: src.name, address: { city: src.city } }).from(src));
+	db.insert(users).select(qb.select({ name: src.name, 'address.city': src.city }).from(src));
+	db.insert(users).select(qb.select({ name: users.name, address: users.address }).from(users));
+
+	db.insert(users).select(
+		// @ts-expect-error - not a column of the group
+		qb.select({ name: src.name, address: { city: src.city, country: src.city } }).from(src),
+	);
+
+	db.insert(users, 'name', 'address.city').select(
+		qb.select({ name: src.name, address: { city: src.city } }).from(src),
+	);
+	db.insert(users, 'name', 'address.city').select(
+		qb.select({ name: src.name, 'address.city': src.city }).from(src),
+	);
+	db.insert(users, 'name', 'address.city', 'address.street').select(
+		qb.select({ name: src.name, address: { city: src.city } }).from(src),
+	);
+	db.insert(users, 'name', 'address.city').select(
+		// @ts-expect-error - `address.street` is not included in the insert column selection
+		qb.select({ name: src.name, address: { city: src.city, street: src.city } }).from(src),
+	);
 }

@@ -1,7 +1,12 @@
 import { aliasedTable, getOriginalColumnFromAlias } from '~/alias.ts';
 import { CodecsCollection } from '~/codecs.ts';
 import { Column } from '~/column.ts';
-import { EmbeddedJsonKeySeparator, EmbeddedKeySeparator, flattenEmbeddedColumnsConfig } from '~/embed.ts';
+import {
+	EmbeddedJsonKeySeparator,
+	EmbeddedKeySeparator,
+	flattenEmbeddedColumnsConfig,
+	flattenSelectedFields,
+} from '~/embed.ts';
 import { entityKind, is } from '~/entity.ts';
 import type { MigrationConfig, MigrationMeta, MigratorInitFailResponse } from '~/migrator.ts';
 import { getMigrationsToRun } from '~/migrator.utils.ts';
@@ -876,7 +881,7 @@ export class MsSqlDialect {
 		const columns: Record<string, MsSqlColumn> = table[Table.Symbol.Columns];
 		const colEntries: [string, MsSqlColumn][] = select && !is(valuesOrSelect, SQL)
 			? Object
-				.keys((valuesOrSelect as TypedQueryBuilder<any>).getSelectedFields())
+				.keys(flattenSelectedFields((valuesOrSelect as TypedQueryBuilder<any>)._.selectedFields))
 				.map((key) => [key, columns[key]!] as [string, MsSqlColumn])
 			: columnList
 			? columnList.map((name) => [name, columns[name]!] as [string, MsSqlColumn])

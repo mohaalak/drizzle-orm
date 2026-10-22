@@ -1,7 +1,7 @@
 import type { Equal } from 'type-tests/utils.ts';
 import { Expect } from 'type-tests/utils.ts';
 import { drizzle } from '~/node-postgres/index.ts';
-import { embed, integer, type PgColumn, pgTable, serial, text } from '~/pg-core/index.ts';
+import { embed, integer, type PgColumn, pgTable, QueryBuilder, serial, text } from '~/pg-core/index.ts';
 import { defineRelations } from '~/relations.ts';
 import { eq } from '~/sql/expressions/index.ts';
 import type { InferInsertModel, InferSelectModel } from '~/table.ts';
@@ -129,4 +129,58 @@ Expect<
 	await rqb.query.users.findMany({ where: { address: { city: 1 } } });
 	// @ts-expect-error - not a column of the group
 	await rqb.query.users.findMany({ orderBy: { address: { country: 'asc' } } });
+}
+
+// `insert().select()` takes embed() groups nested, the same way `values()` does, and still takes dotted keys.
+{
+	const qb = new QueryBuilder();
+	const src = pgTable('src_embed', {
+		name: text().notNull(),
+		city: text().notNull(),
+		lat: integer(),
+	});
+
+	db.insert(users).select(
+		qb.select({ name: src.name, address: { city: src.city, geo: { lat: src.lat } } }).from(src),
+	);
+	db.insert(users).select((qb) => qb.select({ name: src.name, address: { city: src.city } }).from(src));
+	db.insert(users).select(qb.select({ name: src.name, 'address.city': src.city }).from(src));
+	db.insert(users).select(qb.select({ name: users.name, address: users.address }).from(users));
+
+	db.insert(users).select(
+		// @ts-expect-error - not a column of the group
+		qb.select({ name: src.name, address: { city: src.city, country: src.city } }).from(src),
+	);
+
+	db.insert(users, 'name', 'address.city').select(
+		qb.select({ name: src.name, address: { city: src.city } }).from(src),
+	);
+	db.insert(users, 'name', 'address.city').select(
+		qb.select({ name: src.name, 'address.city': src.city }).from(src),
+	);
+	// A listed optional column may be left out of the selection.
+	db.insert(users, 'name', 'address.city', 'address.street').select(
+		qb.select({ name: src.name, address: { city: src.city } }).from(src),
+	);
+	db.insert(users, 'name', 'address.city').select(
+		// @ts-expect-error - `address.street` is not included in the insert column selection
+		qb.select({ name: src.name, address: { city: src.city, street: src.city } }).from(src),
+	);
+
+	const identified = pgTable('identified_embed', {
+		name: text().notNull(),
+		address: embed({
+			city: text().notNull(),
+			seq: integer().generatedAlwaysAsIdentity(),
+		}),
+	});
+	db.insert(identified).select(
+		// @ts-expect-error - `address.seq` is a generated column
+		qb.select({ name: identified.name, address: { city: identified.address.city, seq: identified.address.seq } })
+			.from(identified),
+	);
+	db.insert(identified).overridingSystemValue().select(
+		qb.select({ name: identified.name, address: { city: identified.address.city, seq: identified.address.seq } })
+			.from(identified),
+	);
 }

@@ -41,6 +41,12 @@ const users = mssqlTable('embed_users', {
 
 const plain = mssqlTable('embed_plain', { id: int().primaryKey().identity(), cityId: int() });
 
+const src = mssqlTable('embed_src', {
+	name: varchar({ length: 100 }).notNull(),
+	city: varchar({ length: 100 }).notNull(),
+	lat: int(),
+});
+
 const shops = mssqlTable('embed_shops', {
 	id: int().primaryKey().identity(),
 	location: embed({ city: varchar({ length: 100 }).notNull(), geo: embed({ lat: int() }) }),
@@ -170,6 +176,55 @@ describe('embed (query building)', () => {
 		expect(Object.keys(plain)).toContain('cityId');
 		expect(mock.insert(plain).values({ cityId: 1 }).toSQL().sql).toBe(
 			'insert into [embed_plain] ([cityId]) values (@par0)',
+		);
+	});
+
+	test('insert select takes a nested group, a partial group, a callback, and dotted keys', () => {
+		expect(
+			mock.insert(users).select(
+				mock.select({
+					address: { city: src.city, geo: { lat: src.lat } },
+					name: src.name,
+				}).from(src).where(eq(src.name, 'Bob')),
+			).toSQL(),
+		).toEqual({
+			sql:
+				'insert into [embed_users] ([address_city], [address_geo_lat], [name]) select [city], [lat], [name] from [embed_src] where [embed_src].[name] = @par0',
+			params: ['Bob'],
+		});
+
+		expect(
+			mock.insert(users).select(mock.select({ name: src.name, address: { city: src.city } }).from(src)).toSQL().sql,
+		).toBe('insert into [embed_users] ([name], [address_city]) select [name], [city] from [embed_src]');
+
+		expect(
+			mock.insert(users).select((qb) => qb.select({ name: src.name, address: { city: src.city } }).from(src)).toSQL()
+				.sql,
+		).toBe('insert into [embed_users] ([name], [address_city]) select [name], [city] from [embed_src]');
+
+		expect(
+			mock.insert(users).select(mock.select({ name: src.name, 'address.city': src.city }).from(src)).toSQL().sql,
+		).toBe('insert into [embed_users] ([name], [address_city]) select [name], [city] from [embed_src]');
+
+		expect(() => mock.insert(users).select(mock.select({ name: src.name, address: { country: src.city } }).from(src)))
+			.toThrow('Insert select error: column "address.country" does not exist in table "embed_users"');
+
+		expect(
+			mock.insert(users).select(mock.select({ name: users.name, address: users.address }).from(users)).toSQL().sql,
+		).toBe(
+			'insert into [embed_users] ([name], [address_street], [address_city], [address_geo_lat], [address_geo_lng]) select [name], [address_street], [address_city], [address_geo_lat], [address_geo_lng] from [embed_users]',
+		);
+
+		expect(mock.insert(users).select(mock.select().from(users)).toSQL().sql).toBe(
+			'insert into [embed_users] ([id], [name], [address_street], [address_city], [address_geo_lat], [address_geo_lng], [billing_zip_code]) select [id], [name], [address_street], [address_city], [address_geo_lat], [address_geo_lng], [billing_zip_code] from [embed_users]',
+		);
+
+		expect(mock.insert(plain).select(mock.select({ cityId: plain.cityId }).from(plain)).toSQL().sql).toBe(
+			'insert into [embed_plain] ([cityId]) select [cityId] from [embed_plain]',
+		);
+
+		expect(mock.insert(users).select(sql`select 1`).toSQL().sql).toBe(
+			'insert into [embed_users] ([name], [address_street], [address_city], [address_geo_lat], [address_geo_lng], [billing_zip_code]) select 1',
 		);
 	});
 });
@@ -311,6 +366,34 @@ describe.skipIf(!connectionString)('embed', () => {
 	test('tables without groups are unaffected', async () => {
 		await db.insert(plain).values({ cityId: 7 });
 		expect(await db.select().from(plain)).toEqual([{ id: 1, cityId: 7 }]);
+	});
+
+	test('insert select writes the nested selection', async () => {
+		await db.execute(sql`drop table if exists embed_src`);
+		await db.execute(sql`
+			create table embed_src (
+				name varchar(100) not null,
+				city varchar(100) not null,
+				lat int
+			)
+		`);
+		await db.insert(src).values({ name: 'Dst', city: 'Paris', lat: 52 });
+
+		await db.insert(users).select(
+			db.select({
+				address: { city: src.city, geo: { lat: src.lat } },
+				name: src.name,
+			}).from(src),
+		);
+
+		expect(await db.select({ name: users.name, address: users.address }).from(users).where(eq(users.name, 'Dst')))
+			.toEqual([{
+				name: 'Dst',
+				address: { street: null, city: 'Paris', geo: { lat: 52, lng: null } },
+			}]);
+
+		await db.delete(users).where(eq(users.name, 'Dst'));
+		await db.execute(sql`drop table embed_src`);
 	});
 });
 

@@ -20,6 +20,12 @@ const users = pgTable('users', {
 	}, { prefix: 'bill_' }),
 }, (t) => [index('users_city_idx').on(t.address.city)]);
 
+const src = pgTable('src_embed', {
+	name: text().notNull(),
+	city: text().notNull(),
+	lat: integer(),
+});
+
 const db = drizzle('memory://');
 
 beforeAll(async () => {
@@ -188,6 +194,75 @@ describe('embed', () => {
 
 		const deleted = await db.delete(users).where(eq(users.name, 'Ret')).returning({ geo: users.address.geo });
 		expect(deleted).toStrictEqual([{ geo: { lat: null, lng: null } }]);
+	});
+
+	test('insert select takes a nested group, a partial group, a callback, and dotted keys', () => {
+		expect(
+			db.insert(users).select(
+				db.select({
+					address: { city: src.city, geo: { lat: src.lat } },
+					name: src.name,
+				}).from(src).where(eq(src.name, 'Bob')),
+			).toSQL(),
+		).toEqual({
+			sql:
+				'insert into "users" ("address_city", "address_geo_lat", "name") select "city", "lat", "name" from "src_embed" where "src_embed"."name" = $1',
+			params: ['Bob'],
+		});
+
+		expect(db.insert(users).select(db.select({ name: src.name, address: { city: src.city } }).from(src)).toSQL().sql)
+			.toBe('insert into "users" ("name", "address_city") select "name", "city" from "src_embed"');
+
+		expect(
+			db.insert(users).select((qb) => qb.select({ name: src.name, address: { city: src.city } }).from(src)).toSQL()
+				.sql,
+		).toBe('insert into "users" ("name", "address_city") select "name", "city" from "src_embed"');
+
+		expect(db.insert(users).select(db.select({ name: src.name, 'address.city': src.city }).from(src)).toSQL().sql)
+			.toBe('insert into "users" ("name", "address_city") select "name", "city" from "src_embed"');
+
+		expect(() => db.insert(users).select(db.select({ name: src.name, address: { country: src.city } }).from(src)))
+			.toThrow('Insert select error: column "address.country" does not exist in table "users"');
+
+		expect(db.insert(users).select(db.select({ name: users.name, address: users.address }).from(users)).toSQL().sql)
+			.toBe(
+				'insert into "users" ("name", "address_street", "address_city", "address_geo_lat", "address_geo_lng") select "name", "address_street", "address_city", "address_geo_lat", "address_geo_lng" from "users"',
+			);
+
+		expect(db.insert(users).select(db.select().from(users)).toSQL().sql).toBe(
+			'insert into "users" ("id", "name", "address_street", "address_city", "address_geo_lat", "address_geo_lng", "billing_zip_code") select "id", "name", "address_street", "address_city", "address_geo_lat", "address_geo_lng", "billing_zip_code" from "users"',
+		);
+
+		const plain = pgTable('plain_embed', { id: serial().primaryKey(), cityId: integer() });
+		expect(db.insert(plain).select(db.select({ cityId: plain.cityId }).from(plain)).toSQL().sql).toBe(
+			'insert into "plain_embed" ("cityId") select "cityId" from "plain_embed"',
+		);
+
+		expect(db.insert(users).select(sql`select 1`).toSQL().sql).toBe(
+			'insert into "users" ("id", "name", "address_street", "address_city", "address_geo_lat", "address_geo_lng", "billing_zip_code") select 1',
+		);
+	});
+
+	test('insert select writes the nested selection', async () => {
+		await db.execute(sql`drop table if exists src_embed`);
+		await db.execute(sql`create table src_embed (name text not null, city text not null, lat integer)`);
+		await db.insert(src).values({ name: 'Dst', city: 'Paris', lat: 52 });
+
+		await db.insert(users).select(
+			db.select({
+				address: { city: src.city, geo: { lat: src.lat } },
+				name: src.name,
+			}).from(src),
+		);
+
+		expect(await db.select({ name: users.name, address: users.address }).from(users).where(eq(users.name, 'Dst')))
+			.toEqual([{
+				name: 'Dst',
+				address: { street: null, city: 'Paris', geo: { lat: 52, lng: null } },
+			}]);
+
+		await db.delete(users).where(eq(users.name, 'Dst'));
+		await db.execute(sql`drop table src_embed`);
 	});
 });
 

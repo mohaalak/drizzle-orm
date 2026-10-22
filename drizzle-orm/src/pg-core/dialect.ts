@@ -1,6 +1,7 @@
 import { aliasedTable, aliasedTableSQL, getOriginalColumnFromAlias } from '~/alias.ts';
 import { CodecsCollection } from '~/codecs.ts';
 import { Column } from '~/column.ts';
+import { flattenSelectedFields } from '~/embed.ts';
 import { entityKind, is } from '~/entity.ts';
 import { DrizzleError } from '~/errors.ts';
 import { PgColumn } from '~/pg-core/columns/index.ts';
@@ -688,7 +689,7 @@ export class PgDialect {
 
 		const colFilteredEntries: [string, PgColumn][] = select && !is(valuesOrSelect, SQL)
 			? Object
-				.keys((valuesOrSelect as TypedQueryBuilder<any>).getSelectedFields())
+				.keys(flattenSelectedFields((valuesOrSelect as TypedQueryBuilder<any>)._.selectedFields))
 				.map((key) => [key, columns[key]] as [string, PgColumn])
 			: overridingSystemValue_
 			? colEntries

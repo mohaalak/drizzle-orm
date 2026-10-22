@@ -1,4 +1,12 @@
-import { flattenEmbeddedValues, getTableShape, type NestEmbedded } from '~/embed.ts';
+import {
+	flattenEmbeddedValues,
+	flattenSelectedFields,
+	getTableShape,
+	type InsertSelectionShape,
+	type ListedInsertColumns,
+	type NestEmbedded,
+	type ValidateNestedInsertSelection,
+} from '~/embed.ts';
 import { entityKind, is } from '~/entity.ts';
 import type { TypedQueryBuilder } from '~/query-builders/query-builder.ts';
 import type { SelectResultFields } from '~/query-builders/select.types.ts';
@@ -46,15 +54,7 @@ export type SQLiteInsertSelection<
 	TTable extends SQLiteTable,
 	TColumnsList extends string[] | 'all' = 'all',
 	TModel extends Record<string, unknown> = InferModelFromColumns<TTable['_']['columns'], 'insert'>,
-> =
-	& {
-		[K in keyof TModel as TColumnsList extends 'all' ? K : Extract<K, TColumnsList[number]>]:
-			| AnySQLiteColumn
-			| SQL
-			| SQL.Aliased
-			| TModel[K];
-	}
-	& {};
+> = InsertSelectionShape<ListedInsertColumns<TModel, TColumnsList>, AnySQLiteColumn>;
 
 export type NoDuplicateColumns<
 	T extends readonly unknown[],
@@ -70,26 +70,27 @@ export type ValidateInsertSelectionKey<
 	TTable extends SQLiteTable,
 	TSelection extends SQLiteInsertSelection<any>,
 	K extends keyof TSelection,
-> = K extends keyof InferModelFromColumns<TTable['_']['columns'], 'insert'> ? TSelection[K]
-	: K extends keyof InferModelFromColumns<TTable['_']['columns'], 'insert', { override: true }> ? DrizzleTypeError<
-			`Column "${
-				& K
-				& string}" in table "${TTable['_'][
-				'name'
-			]}" is a generated column - manual value insertion restricted`
-		>
-	: DrizzleTypeError<`Column "${K & string}" does not exist in table "${TTable['_']['name']}"`>;
+> = ValidateNestedInsertSelection<
+	Pick<TSelection, K>,
+	InferModelFromColumns<TTable['_']['columns'], 'insert'>,
+	InferModelFromColumns<TTable['_']['columns'], 'insert', { override: true }>,
+	'all',
+	TTable['_']['name'],
+	'restricted'
+>[K];
 
 export type NoUnknownKeysInInsertSelection<
 	TTable extends SQLiteTable,
 	TSelection extends SQLiteInsertSelection<any>,
 	TColumnList extends string[] | 'all' = 'all',
-> = {
-	[K in keyof TSelection]: TColumnList extends string[]
-		? K extends TColumnList[number] ? ValidateInsertSelectionKey<TTable, TSelection, K>
-		: DrizzleTypeError<`Column "${K & string}" is not included in the insert column selection`>
-		: ValidateInsertSelectionKey<TTable, TSelection, K>;
-};
+> = ValidateNestedInsertSelection<
+	TSelection,
+	InferModelFromColumns<TTable['_']['columns'], 'insert'>,
+	InferModelFromColumns<TTable['_']['columns'], 'insert', { override: true }>,
+	TColumnList,
+	TTable['_']['name'],
+	'restricted'
+>;
 
 export interface SQLiteInsertBuilderConstructor {
 	new(
@@ -177,7 +178,7 @@ export class SQLiteInsertBuilder<
 		const select = typeof selectQuery === 'function' ? selectQuery(new QueryBuilder()) : selectQuery;
 		if (!is(select, SQL)) {
 			const insertCols = Object.keys(this.table[Table.Symbol.Columns]);
-			const selected = Object.keys(select._.selectedFields);
+			const selected = Object.keys(flattenSelectedFields(select._.selectedFields));
 
 			for (const col of selected) {
 				if (!insertCols.includes(col)) {

@@ -1,6 +1,7 @@
 import { aliasedTable, aliasedTableSQL, getOriginalColumnFromAlias } from '~/alias.ts';
 import { CodecsCollection } from '~/codecs.ts';
 import { Column } from '~/column.ts';
+import { flattenSelectedFields } from '~/embed.ts';
 import { entityKind, is } from '~/entity.ts';
 import { DrizzleError } from '~/errors.ts';
 import type { TypedQueryBuilder } from '~/query-builders/query-builder.ts';
@@ -727,7 +728,7 @@ export class MySqlDialect {
 			: Object.entries(columns);
 		const colEntriesFiltered: [string, MySqlColumn][] = select && !is(valuesOrSelect, SQL)
 			? Object
-				.keys((valuesOrSelect as TypedQueryBuilder<any>).getSelectedFields())
+				.keys(flattenSelectedFields((valuesOrSelect as TypedQueryBuilder<any>)._.selectedFields))
 				.map((key) => [key, columns[key]] as [string, MySqlColumn])
 			: colEntries.filter(([_, col]) => !col.shouldDisableInsert());
 

@@ -1,4 +1,12 @@
-import { flattenEmbeddedValues, getTableShape, type NestEmbedded } from '~/embed.ts';
+import {
+	flattenEmbeddedValues,
+	flattenSelectedFields,
+	getTableShape,
+	type InsertSelectionShape,
+	type ListedInsertColumns,
+	type NestEmbedded,
+	type ValidateNestedInsertSelection,
+} from '~/embed.ts';
 import { entityKind, is } from '~/entity.ts';
 import type { MsSqlDialect } from '~/mssql-core/dialect.ts';
 import type {
@@ -50,33 +58,33 @@ export type MsSqlInsertSelection<
 	TTable extends MsSqlTable,
 	TColumnsList extends string[] | 'all' = 'all',
 	TModel extends Record<string, unknown> = InferInsertColumns<TTable>,
-> =
-	& {
-		[K in keyof TModel as TColumnsList extends 'all' ? K : Extract<K, TColumnsList[number]>]:
-			| AnyMsSqlColumn
-			| SQL
-			| SQL.Aliased
-			| TModel[K];
-	}
-	& {};
+> = InsertSelectionShape<ListedInsertColumns<TModel, TColumnsList>, AnyMsSqlColumn>;
 
 export type ValidateInsertSelectionKey<
 	TTable extends MsSqlTable,
 	TSelection extends MsSqlInsertSelection<any>,
 	K extends keyof TSelection,
-> = K extends keyof InferInsertColumns<TTable> ? TSelection[K]
-	: DrizzleTypeError<`Column "${K & string}" does not exist in table "${TTable['_']['name']}"`>;
+> = ValidateNestedInsertSelection<
+	Pick<TSelection, K>,
+	InferInsertColumns<TTable>,
+	InferInsertColumns<TTable>,
+	'all',
+	TTable['_']['name'],
+	'none'
+>[K];
 
 export type NoUnknownKeysInInsertSelection<
 	TTable extends MsSqlTable,
 	TSelection extends MsSqlInsertSelection<any>,
 	TColumnList extends string[] | 'all' = 'all',
-> = {
-	[K in keyof TSelection]: TColumnList extends string[]
-		? K extends TColumnList[number] ? ValidateInsertSelectionKey<TTable, TSelection, K>
-		: DrizzleTypeError<`Column "${K & string}" is not included in the insert column selection`>
-		: ValidateInsertSelectionKey<TTable, TSelection, K>;
-};
+> = ValidateNestedInsertSelection<
+	TSelection,
+	InferInsertColumns<TTable>,
+	InferInsertColumns<TTable>,
+	TColumnList,
+	TTable['_']['name'],
+	'none'
+>;
 
 export type NoDuplicateColumns<
 	T extends readonly unknown[],
@@ -173,7 +181,7 @@ export class MsSqlInsertBuilder<
 		const select = typeof selectQuery === 'function' ? selectQuery(new QueryBuilder()) : selectQuery;
 		if (!is(select, SQL)) {
 			const insertCols = Object.keys(this.table[Table.Symbol.Columns]);
-			const selected = Object.keys(select._.selectedFields);
+			const selected = Object.keys(flattenSelectedFields(select._.selectedFields));
 
 			for (const col of selected) {
 				if (!insertCols.includes(col)) {

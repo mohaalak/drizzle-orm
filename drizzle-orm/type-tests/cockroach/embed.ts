@@ -1,6 +1,6 @@
 import type { Equal } from 'type-tests/utils.ts';
 import { Expect } from 'type-tests/utils.ts';
-import { type CockroachColumn, cockroachTable, embed, int4, text } from '~/cockroach-core/index.ts';
+import { type CockroachColumn, cockroachTable, embed, int4, QueryBuilder, text } from '~/cockroach-core/index.ts';
 import { eq } from '~/sql/expressions/index.ts';
 import type { InferInsertModel, InferSelectModel } from '~/table.ts';
 import { db } from './db.ts';
@@ -113,4 +113,53 @@ Expect<
 	const rows = await db.update(users).set({ name: 'x' }).from(other).returning({ city: users.address.city });
 	Expect<Equal<typeof rows, { city: string }[]>>();
 	db.update(users).set({ name: 'x' }).from(other).returning();
+}
+
+// `insert().select()` takes embed() groups nested, the same way `values()` does, and still takes dotted keys.
+{
+	const qb = new QueryBuilder();
+	const src = cockroachTable('src_embed', {
+		name: text().notNull(),
+		city: text().notNull(),
+		lat: int4(),
+	});
+
+	db.insert(users).select(
+		qb.select({ name: src.name, address: { city: src.city, geo: { lat: src.lat } } }).from(src),
+	);
+	db.insert(users).select((qb) => qb.select({ name: src.name, address: { city: src.city } }).from(src));
+	db.insert(users).select(qb.select({ name: src.name, 'address.city': src.city }).from(src));
+	db.insert(users).select(qb.select({ name: users.name, address: users.address }).from(users));
+
+	db.insert(users).select(
+		// @ts-expect-error - not a column of the group
+		qb.select({ name: src.name, address: { city: src.city, country: src.city } }).from(src),
+	);
+
+	db.insert(users, 'name', 'address.city').select(
+		qb.select({ name: src.name, address: { city: src.city } }).from(src),
+	);
+	db.insert(users, 'name', 'address.city').select(
+		qb.select({ name: src.name, 'address.city': src.city }).from(src),
+	);
+	db.insert(users, 'name', 'address.city', 'address.street').select(
+		qb.select({ name: src.name, address: { city: src.city } }).from(src),
+	);
+	db.insert(users, 'name', 'address.city').select(
+		// @ts-expect-error - `address.street` is not included in the insert column selection
+		qb.select({ name: src.name, address: { city: src.city, street: src.city } }).from(src),
+	);
+
+	const identified = cockroachTable('identified_embed', {
+		name: text().notNull(),
+		address: embed({
+			city: text().notNull(),
+			seq: int4().generatedAlwaysAsIdentity(),
+		}),
+	});
+	db.insert(identified).select(
+		// @ts-expect-error - `address.seq` is a generated column
+		qb.select({ name: identified.name, address: { city: identified.address.city, seq: identified.address.seq } })
+			.from(identified),
+	);
 }

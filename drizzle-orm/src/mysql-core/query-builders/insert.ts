@@ -1,4 +1,11 @@
-import { flattenEmbeddedValues, type NestEmbedded } from '~/embed.ts';
+import {
+	flattenEmbeddedValues,
+	flattenSelectedFields,
+	type InsertSelectionShape,
+	type ListedInsertColumns,
+	type NestEmbedded,
+	type ValidateNestedInsertSelection,
+} from '~/embed.ts';
 import { entityKind, is } from '~/entity.ts';
 import type { MySqlDialect } from '~/mysql-core/dialect.ts';
 import type { AnyMySqlQueryResultHKT, MySqlQueryResultHKT, MySqlQueryResultKind } from '~/mysql-core/session.ts';
@@ -47,15 +54,7 @@ export type MySqlInsertSelection<
 	TTable extends MySqlTable,
 	TColumnsList extends string[] | 'all' = 'all',
 	TModel extends Record<string, unknown> = InferInsertColumns<TTable>,
-> =
-	& {
-		[K in keyof TModel as TColumnsList extends 'all' ? K : Extract<K, TColumnsList[number]>]:
-			| AnyMySqlColumn
-			| SQL
-			| SQL.Aliased
-			| TModel[K];
-	}
-	& {};
+> = InsertSelectionShape<ListedInsertColumns<TModel, TColumnsList>, AnyMySqlColumn>;
 
 export type NoDuplicateColumns<
 	T extends readonly unknown[],
@@ -71,26 +70,27 @@ export type ValidateInsertSelectionKey<
 	TTable extends MySqlTable,
 	TSelection extends MySqlInsertSelection<any>,
 	K extends keyof TSelection,
-> = K extends keyof InferInsertColumns<TTable> ? TSelection[K]
-	: K extends keyof InferInsertColumns<TTable, { override: true }> ? DrizzleTypeError<
-			`Column "${
-				& K
-				& string}" in table "${TTable['_'][
-				'name'
-			]}" is a generated column - manual value insertion restricted`
-		>
-	: DrizzleTypeError<`Column "${K & string}" does not exist in table "${TTable['_']['name']}"`>;
+> = ValidateNestedInsertSelection<
+	Pick<TSelection, K>,
+	InferInsertColumns<TTable>,
+	InferInsertColumns<TTable, { override: true }>,
+	'all',
+	TTable['_']['name'],
+	'restricted'
+>[K];
 
 export type NoUnknownKeysInInsertSelection<
 	TTable extends MySqlTable,
 	TSelection extends MySqlInsertSelection<any>,
 	TColumnList extends string[] | 'all' = 'all',
-> = {
-	[K in keyof TSelection]: TColumnList extends string[]
-		? K extends TColumnList[number] ? ValidateInsertSelectionKey<TTable, TSelection, K>
-		: DrizzleTypeError<`Column "${K & string}" is not included in the insert column selection`>
-		: ValidateInsertSelectionKey<TTable, TSelection, K>;
-};
+> = ValidateNestedInsertSelection<
+	TSelection,
+	InferInsertColumns<TTable>,
+	InferInsertColumns<TTable, { override: true }>,
+	TColumnList,
+	TTable['_']['name'],
+	'restricted'
+>;
 
 export interface MySqlInsertBuilderConstructor {
 	new(
@@ -176,7 +176,7 @@ export class MySqlInsertBuilder<
 		const select = typeof selectQuery === 'function' ? selectQuery(new QueryBuilder()) : selectQuery;
 		if (!is(select, SQL)) {
 			const insertCols = Object.keys(this.table[Table.Symbol.Columns]);
-			const selected = Object.keys(select._.selectedFields);
+			const selected = Object.keys(flattenSelectedFields(select._.selectedFields));
 
 			for (const col of selected) {
 				if (!insertCols.includes(col)) {
