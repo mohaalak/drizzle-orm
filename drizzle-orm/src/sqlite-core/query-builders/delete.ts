@@ -1,12 +1,12 @@
+import { getTableShape } from '~/embed.ts';
 import { entityKind, is } from '~/entity.ts';
 import type { SelectResultFields } from '~/query-builders/select.types.ts';
 import { SelectionProxyHandler } from '~/selection-proxy.ts';
 import type { Placeholder, Query, SQL, SQLWrapper } from '~/sql/sql.ts';
 import type { SQLiteDialect } from '~/sqlite-core/dialect.ts';
 import type { SQLiteSession } from '~/sqlite-core/session.ts';
-import { SQLiteTable } from '~/sqlite-core/table.ts';
+import type { SQLiteTable } from '~/sqlite-core/table.ts';
 import type { Subquery } from '~/subquery.ts';
-import { Table } from '~/table.ts';
 import { type Assume, orderSelectedFields, type ValueOrArray } from '~/utils.ts';
 import type { SQLiteColumn } from '../columns/common.ts';
 import type { SelectedFieldsFlat, SelectedFieldsOrdered } from './select.types.ts';
@@ -221,7 +221,7 @@ export class SQLiteDeleteBase<
 		if (typeof columns[0] === 'function') {
 			const orderBy = columns[0](
 				new Proxy(
-					this.config.table[Table.Symbol.Columns],
+					getTableShape(this.config.table),
 					new SelectionProxyHandler({ sqlAliasedBehavior: 'alias', sqlBehavior: 'sql' }),
 				) as any,
 			);
@@ -265,7 +265,7 @@ export class SQLiteDeleteBase<
 		fields: TSelectedFields,
 	): SQLiteDeleteReturning<this, TDynamic, TSelectedFields>;
 	returning(
-		fields: SelectedFieldsFlat = this.table[SQLiteTable.Symbol.Columns],
+		fields: SelectedFieldsFlat = getTableShape(this.table) as SelectedFieldsFlat,
 	): SQLiteDeleteReturning<this, TDynamic, any> | SQLiteDeleteReturningAll<this, TDynamic> {
 		this.config.returning = orderSelectedFields<SQLiteColumn>(fields, undefined, this.dialect.codecs);
 		return this as any;

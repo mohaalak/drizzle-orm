@@ -1,4 +1,6 @@
 import type {
+	BuildColumn,
+	ColumnBuilderBase,
 	ColumnBuilderBaseConfig,
 	ColumnBuilderExtraConfig,
 	ColumnBuilderRuntimeConfig,
@@ -8,13 +10,14 @@ import type {
 import { ColumnBuilder } from '~/column-builder.ts';
 import { Column } from '~/column.ts';
 import type { ColumnBaseConfig } from '~/column.ts';
+import type { EmbedBuilder, FlattenEmbedBuilders } from '~/embed.ts';
 import { entityKind } from '~/entity.ts';
 import type { SQL } from '~/sql/sql.ts';
 import type { SQLiteType } from '~/sqlite-core/codecs.ts';
 import type { ForeignKey, UpdateDeleteAction } from '~/sqlite-core/foreign-keys.ts';
 import { ForeignKeyBuilder } from '~/sqlite-core/foreign-keys.ts';
 import type { SQLiteTable } from '~/sqlite-core/table.ts';
-import type { Update } from '~/utils.ts';
+import type { Assume, Update } from '~/utils.ts';
 
 export type SQLiteColumns = Record<string, SQLiteColumn<any>>;
 
@@ -114,3 +117,23 @@ export abstract class SQLiteColumn<
 export type AnySQLiteColumn<TPartial extends Partial<ColumnBaseConfig<ColumnType>> = {}> = SQLiteColumn<
 	Required<Update<ColumnBaseConfig<ColumnType>, TPartial>>
 >;
+
+/** A table definition: column builders, optionally grouped with `embed()`. */
+export type SQLiteTableColumnsMap = Record<string, ColumnBuilderBase | EmbedBuilder>;
+
+type HasEmbeds<TConfigMap> = [Extract<TConfigMap[keyof TConfigMap], EmbedBuilder>] extends [never] ? false : true;
+
+export type SQLiteBuildColumns<
+	TTableName extends string,
+	TConfigMap extends SQLiteTableColumnsMap,
+> = HasEmbeds<TConfigMap> extends true ? SQLiteBuildFlatColumns<TTableName, FlattenEmbedBuilders<TConfigMap>>
+	: SQLiteBuildFlatColumns<TTableName, TConfigMap>;
+
+type SQLiteBuildFlatColumns<
+	TTableName extends string,
+	TConfigMap,
+> =
+	& {
+		[Key in keyof TConfigMap]: BuildColumn<TTableName, Assume<TConfigMap[Key], ColumnBuilderBase>, 'sqlite'>;
+	}
+	& {};

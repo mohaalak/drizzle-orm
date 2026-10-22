@@ -1,3 +1,4 @@
+import { flattenEmbeddedValues, getTableShape, type NestEmbedded } from '~/embed.ts';
 import { entityKind, is } from '~/entity.ts';
 import type { TypedQueryBuilder } from '~/query-builders/query-builder.ts';
 import type { SelectResultFields } from '~/query-builders/select.types.ts';
@@ -6,9 +7,9 @@ import { SQL, sql } from '~/sql/sql.ts';
 import type { SQLiteDialect } from '~/sqlite-core/dialect.ts';
 import type { IndexColumn } from '~/sqlite-core/indexes.ts';
 import type { SQLiteSession } from '~/sqlite-core/session.ts';
-import { SQLiteTable } from '~/sqlite-core/table.ts';
+import type { SQLiteTable } from '~/sqlite-core/table.ts';
 import type { Subquery } from '~/subquery.ts';
-import { type InferInsertModel, Table } from '~/table.ts';
+import { type InferModelFromColumns, Table } from '~/table.ts';
 import { type Assume, type DrizzleTypeError, mapUpdateSet, orderSelectedFields } from '~/utils.ts';
 import type { AnySQLiteColumn, SQLiteColumn } from '../columns/common.ts';
 import { QueryBuilder } from './query-builder.ts';
@@ -29,20 +30,22 @@ export interface SQLiteInsertConfig<TTable extends SQLiteTable = SQLiteTable> {
 export type SQLiteInsertValue<
 	TTable extends SQLiteTable,
 	TColumnsList extends string[] | 'all' = 'all',
-	TModel extends Record<string, any> = InferInsertModel<TTable>,
+	TModel extends Record<string, any> = InferModelFromColumns<TTable['_']['columns'], 'insert'>,
 > =
-	& {
-		[K in keyof TModel as TColumnsList extends 'all' ? K : Extract<K, TColumnsList[number]>]:
-			| TModel[K]
-			| SQL
-			| Placeholder;
-	}
+	& NestEmbedded<
+		{
+			[K in keyof TModel as TColumnsList extends 'all' ? K : Extract<K, TColumnsList[number]>]:
+				| TModel[K]
+				| SQL
+				| Placeholder;
+		}
+	>
 	& {};
 
 export type SQLiteInsertSelection<
 	TTable extends SQLiteTable,
 	TColumnsList extends string[] | 'all' = 'all',
-	TModel extends Record<string, unknown> = InferInsertModel<TTable>,
+	TModel extends Record<string, unknown> = InferModelFromColumns<TTable['_']['columns'], 'insert'>,
 > =
 	& {
 		[K in keyof TModel as TColumnsList extends 'all' ? K : Extract<K, TColumnsList[number]>]:
@@ -67,8 +70,8 @@ export type ValidateInsertSelectionKey<
 	TTable extends SQLiteTable,
 	TSelection extends SQLiteInsertSelection<any>,
 	K extends keyof TSelection,
-> = K extends keyof InferInsertModel<TTable> ? TSelection[K]
-	: K extends keyof InferInsertModel<TTable, { override: true }> ? DrizzleTypeError<
+> = K extends keyof InferModelFromColumns<TTable['_']['columns'], 'insert'> ? TSelection[K]
+	: K extends keyof InferModelFromColumns<TTable['_']['columns'], 'insert', { override: true }> ? DrizzleTypeError<
 			`Column "${
 				& K
 				& string}" in table "${TTable['_'][
@@ -134,6 +137,7 @@ export class SQLiteInsertBuilder<
 		// 		`One of the values you want to insert is empty. In SQLite you can insert only one empty object per statement. For this case Drizzle with use "INSERT INTO ... DEFAULT VALUES" syntax`,
 		// 	);
 		// }
+		values = values.map((value) => flattenEmbeddedValues(this.table, value)) as typeof values;
 
 		return new this.builder(
 			this.table,
@@ -423,7 +427,7 @@ export class SQLiteInsertBase<
 		fields: TSelectedFields,
 	): SQLiteInsertReturning<this, TDynamic, TSelectedFields>;
 	returning(
-		fields: SelectedFieldsFlat = this.config.table[SQLiteTable.Symbol.Columns],
+		fields: SelectedFieldsFlat = getTableShape(this.config.table) as SelectedFieldsFlat,
 	): SQLiteInsertWithout<AnySQLiteInsert, TDynamic, 'returning'> {
 		this.config.returning = orderSelectedFields<SQLiteColumn>(fields, undefined, this.dialect.codecs);
 		return this as any;
