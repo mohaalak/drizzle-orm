@@ -44,7 +44,14 @@ import { selectGeneratorForMysqlColumn } from './mysql-core/selectGensForColumn.
 import { selectGeneratorForPostgresColumn } from './pg-core/selectGensForColumn.ts';
 import { selectGeneratorForSingleStoreColumn } from './singlestore-core/selectGensForColumn.ts';
 import { selectGeneratorForSqlite } from './sqlite-core/selectGensForColumn.ts';
-import { equalSets, intMax, isSequenceBackedColumn } from './utils.ts';
+import {
+	equalSets,
+	flattenRefinementColumns,
+	getFlatColumns,
+	intMax,
+	isSequenceBackedColumn,
+	nestEmbeddedRow,
+} from './utils.ts';
 
 /** a statement that has been built but not yet run, so that it can be either executed or rendered */
 type SeedQuery = SQLWrapper & PromiseLike<unknown>;
@@ -71,6 +78,20 @@ export class SeedService {
 		refinements?: RefinementsType,
 		options?: { count?: number; seed?: number; version?: number },
 	) => {
+		// the columns of an `embed()` group are refined as a nested object, and known to the rest of the seed by dotted keys
+		if (refinements !== undefined) {
+			refinements = Object.fromEntries(
+				Object.entries(refinements).map((
+					[tableName, tableRefinements],
+				) => [
+					tableName,
+					tableRefinements.columns === undefined
+						? tableRefinements
+						: { ...tableRefinements, columns: flattenRefinementColumns(tableRefinements.columns) },
+				]),
+			) as RefinementsType;
+		}
+
 		let columnPossibleGenerator: Prettify<GeneratePossibleGeneratorsColumnType>;
 		let tablePossibleGenerators: Prettify<GeneratePossibleGeneratorsTableType>;
 		const customSeed = options?.seed === undefined ? 0 : options.seed;
@@ -1170,7 +1191,10 @@ export class SeedService {
 		if (is(db, PgAsyncDatabase<any>)) {
 			const query = db.insert((schema as { [key: string]: PgTable })[tableName]!);
 
-			return override === true ? query.overridingSystemValue().values(rows) : query.values(rows);
+			// an `embed()` group is written as a nested object, while the seed generates its columns under dotted keys
+			const nestedRows = rows.map(nestEmbeddedRow);
+
+			return override === true ? query.overridingSystemValue().values(nestedRows) : query.values(nestedRows);
 		} else if (is(db, MySqlAsyncDatabase<any, any>)) {
 			return db.insert((schema as { [key: string]: MySqlTable })[tableName]!).values(rows);
 		} else if (is(db, SQLiteAsyncDatabase<any, any>)) {
@@ -1214,7 +1238,12 @@ export class SeedService {
 		// every dialect spells this the same way, only the type of the database object differs
 		const table = schema[tableName] as PgTableWithColumns<any>;
 
-		return (db as PgAsyncDatabase<any>).update(table).set(values).where(eq(table[whereColumn], whereValue));
+		// the column map is flat, an `embed()` group's columns are only nested on the table object itself
+		const whereTableColumn = getFlatColumns(table)[whereColumn]!;
+
+		return (db as PgAsyncDatabase<any>).update(table).set(nestEmbeddedRow(values)).where(
+			eq(whereTableColumn, whereValue),
+		);
 	};
 
 	buildSequenceSql = (
@@ -1229,7 +1258,7 @@ export class SeedService {
 		if (!is(db, PgAsyncDatabase)) return;
 
 		const table = schema[tableName] as PgTableWithColumns<any> | undefined;
-		const column = table?.[columnName];
+		const column = table === undefined ? undefined : getFlatColumns(table)[columnName];
 		if (table === undefined || column === undefined) return;
 
 		const dialect = (<any> db).dialect as PgDialect;
