@@ -13,8 +13,8 @@ export const EmbeddedKeySeparator = '.';
 
 /**
  * Stands in for {@link EmbeddedKeySeparator} in the keys of columns a dialect selects inside a JSON
- * object, where a `.` in a key would be read as a path (SQL Server's `for json path`).
- * Relational rows nest both the same way.
+ * object, where a `.` in a key would be read as a path (SQL Server's `for json path`). Only a
+ * dialect that uses it passes it to {@link nestEmbeddedRelationalRows}.
  */
 export const EmbeddedJsonKeySeparator = '→';
 
@@ -203,8 +203,6 @@ export function flattenEmbeddedValues(table: Table, value: Record<string, unknow
 	return result;
 }
 
-const embeddedKeySegments = new RegExp(`[${EmbeddedKeySeparator}${EmbeddedJsonKeySeparator}]`);
-
 interface EmbeddedRowsPlan {
 	/** Columns selected under a dotted key, as the path to nest each one at. */
 	readonly columns: readonly (readonly [key: string, path: readonly string[]])[];
@@ -213,18 +211,20 @@ interface EmbeddedRowsPlan {
 }
 
 /** Finds the embedded columns a relational selection reads, or `undefined` when it reads none. */
-function embeddedRowsPlan(selection: BuildRelationalQueryResult['selection']): EmbeddedRowsPlan | undefined {
+function embeddedRowsPlan(
+	selection: BuildRelationalQueryResult['selection'],
+	separators: readonly string[],
+): EmbeddedRowsPlan | undefined {
 	const columns: [string, string[]][] = [];
 	const relations: [string, EmbeddedRowsPlan][] = [];
 	for (const item of selection) {
 		if (item.selection) {
-			const plan = embeddedRowsPlan(item.selection);
+			const plan = embeddedRowsPlan(item.selection, separators);
 			if (plan) relations.push([item.key, plan]);
-		} else if (
-			item.fieldType === 'Column'
-			&& (item.key.includes(EmbeddedKeySeparator) || item.key.includes(EmbeddedJsonKeySeparator))
-		) {
-			columns.push([item.key, item.key.split(embeddedKeySegments)]);
+		} else if (item.fieldType === 'Column' && separators.some((separator) => item.key.includes(separator))) {
+			let path = [item.key];
+			for (const separator of separators) path = path.flatMap((segment) => segment.split(separator));
+			columns.push([item.key, path]);
 		}
 	}
 
@@ -257,13 +257,16 @@ function nestEmbeddedRows(value: unknown, plan: EmbeddedRowsPlan): void {
  * selects under their dotted keys, come back nested: `'address.city'` → `address.city`. Returns
  * the mapper untouched for selections that read no embedded columns.
  *
+ * @param separators what splits an embedded column's key into its path; a dialect that renames
+ * keys inside JSON objects adds {@link EmbeddedJsonKeySeparator}
  * @internal
  */
 export function nestEmbeddedRelationalRows<TMapper extends RelationalRowsMapper | undefined>(
 	mapper: TMapper,
 	selection: BuildRelationalQueryResult['selection'],
+	separators: readonly string[] = [EmbeddedKeySeparator],
 ): TMapper {
-	const plan = embeddedRowsPlan(selection);
+	const plan = embeddedRowsPlan(selection, separators);
 	if (!plan) return mapper;
 
 	return ((rows: Parameters<RelationalRowsMapper>[0]) => {
@@ -275,7 +278,7 @@ export function nestEmbeddedRelationalRows<TMapper extends RelationalRowsMapper 
 
 /** @internal */
 export function hasEmbeddedRows(selection: BuildRelationalQueryResult['selection']): boolean {
-	return embeddedRowsPlan(selection) !== undefined;
+	return embeddedRowsPlan(selection, [EmbeddedKeySeparator]) !== undefined;
 }
 
 // ----------------------------------------------------------------------------- types
