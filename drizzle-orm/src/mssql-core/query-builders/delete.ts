@@ -16,7 +16,7 @@ import { QueryPromise } from '~/query-promise.ts';
 import type { Query, SQL, SQLWrapper } from '~/sql/sql.ts';
 import { orderSelectedFields } from '~/utils.ts';
 import type { MsSqlColumn } from '../columns/common.ts';
-import type { SelectedFieldsFlat, SelectedFieldsOrdered } from './select.types.ts';
+import type { SelectedFields, SelectedFieldsOrdered } from './select.types.ts';
 
 export type MsSqlDeleteWithout<
 	T extends AnyMsSqlDeleteBase,
@@ -54,7 +54,7 @@ export type MsSqlDeleteReturningAll<
 export type MsSqlDeleteReturning<
 	T extends AnyMsSqlDeleteBase,
 	TDynamic extends boolean,
-	TSelectedFields extends SelectedFieldsFlat,
+	TSelectedFields extends SelectedFields,
 > = MsSqlDeleteWithout<
 	MsSqlDeleteBase<
 		T['_']['table'],
@@ -196,11 +196,11 @@ export class MsSqlDeleteBase<
 	 * ```
 	 */
 	output(): MsSqlDeleteReturningAll<this, TDynamic>;
-	output<TSelectedFields extends SelectedFieldsFlat>(
+	output<TSelectedFields extends SelectedFields>(
 		fields: TSelectedFields,
 	): MsSqlDeleteReturning<this, TDynamic, TSelectedFields>;
 	output(
-		fields: SelectedFieldsFlat = getTableShape(this.config.table) as SelectedFieldsFlat,
+		fields: SelectedFields = getTableShape(this.config.table) as SelectedFields,
 	): MsSqlDeleteWithout<AnyMsSqlDeleteBase, TDynamic, 'output'> {
 		this.config.output = orderSelectedFields<MsSqlColumn>(fields, undefined, this.dialect.codecs);
 		return this as any;

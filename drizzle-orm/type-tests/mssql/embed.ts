@@ -75,6 +75,18 @@ Expect<
 		address: { city: 'Berlin' },
 	});
 	Expect<Equal<typeof some, { city: string; lat: number | null }[]>>();
+
+	const grouped = await db.insert(users).output({
+		name: users.name,
+		address: users.address,
+		geo: users.address.geo,
+	}).values({ name: 'Ada', address: { city: 'Berlin' } });
+	Expect<Equal<typeof grouped, { name: string; address: Address; geo: Address['geo'] }[]>>();
+
+	const partial = await db.insert(users).output({
+		address: { city: users.address.city, geo: users.address.geo },
+	}).values({ name: 'Ada', address: { city: 'Berlin' } });
+	Expect<Equal<typeof partial, { address: { city: string; geo: Address['geo'] } }[]>>();
 }
 
 {
@@ -93,6 +105,20 @@ Expect<
 	Expect<Equal<typeof both, { inserted: { city: string }; deleted: { lat: number | null } }[]>>();
 	const inserted = await db.update(users).set({ name: 'x' }).output({ inserted: true });
 	Expect<Equal<typeof inserted, { inserted: User }[]>>();
+
+	const grouped = await db.update(users).set({ name: 'x' }).output({
+		inserted: { address: users.address, name: users.name },
+		deleted: { geo: users.address.geo },
+	});
+	Expect<
+		Equal<typeof grouped, { inserted: { address: Address; name: string }; deleted: { geo: Address['geo'] } }[]>
+	>();
+
+	const cleared = await db.update(users).set({ name: 'x' }).output({
+		inserted: { address: users.address },
+		deleted: true,
+	});
+	Expect<Equal<typeof cleared, { inserted: { address: Address }; deleted: User }[]>>();
 }
 
 {
@@ -100,6 +126,8 @@ Expect<
 	Expect<Equal<typeof all, User[]>>();
 	const some = await db.delete(users).output({ city: users.address.city });
 	Expect<Equal<typeof some, { city: string }[]>>();
+	const grouped = await db.delete(users).output({ name: users.name, address: users.address, geo: users.address.geo });
+	Expect<Equal<typeof grouped, { name: string; address: Address; geo: Address['geo'] }[]>>();
 }
 
 {

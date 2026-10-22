@@ -122,6 +122,50 @@ describe('embed (query building)', () => {
 		);
 	});
 
+	test('output takes a whole group, a nested group, and plain columns', () => {
+		expect(
+			mock.insert(users).output({ address: users.address }).values({ name: 'Ada', address: { city: 'Berlin' } }).toSQL()
+				.sql,
+		).toBe(
+			'insert into [embed_users] ([name], [address_street], [address_city], [address_geo_lat], [address_geo_lng], [billing_zip_code]) output INSERTED.[address_street], INSERTED.[address_city], INSERTED.[address_geo_lat], INSERTED.[address_geo_lng] values (@par0, default, @par1, default, default, default)',
+		);
+		expect(
+			mock.insert(users).output({ name: users.name, geo: users.address.geo }).values({
+				name: 'Ada',
+				address: { city: 'Berlin' },
+			}).toSQL().sql,
+		).toBe(
+			'insert into [embed_users] ([name], [address_street], [address_city], [address_geo_lat], [address_geo_lng], [billing_zip_code]) output INSERTED.[name], INSERTED.[address_geo_lat], INSERTED.[address_geo_lng] values (@par0, default, @par1, default, default, default)',
+		);
+		expect(
+			mock.insert(users).output({
+				address: { city: users.address.city, geo: users.address.geo },
+				label: sql<string>`${users.name}`,
+			}).values({ name: 'Ada', address: { city: 'Berlin' } }).toSQL().sql,
+		).toBe(
+			'insert into [embed_users] ([name], [address_street], [address_city], [address_geo_lat], [address_geo_lng], [billing_zip_code]) output INSERTED.[address_city], INSERTED.[address_geo_lat], INSERTED.[address_geo_lng], INSERTED.[name] values (@par0, default, @par1, default, default, default)',
+		);
+
+		expect(mock.delete(users).output({ address: users.address }).toSQL().sql).toBe(
+			'delete from [embed_users] output DELETED.[address_street], DELETED.[address_city], DELETED.[address_geo_lat], DELETED.[address_geo_lng]',
+		);
+		expect(mock.delete(users).output({ name: users.name, geo: users.address.geo }).toSQL().sql).toBe(
+			'delete from [embed_users] output DELETED.[name], DELETED.[address_geo_lat], DELETED.[address_geo_lng]',
+		);
+
+		expect(
+			mock.update(users).set({ name: 'x' }).output({
+				inserted: { address: users.address },
+				deleted: { geo: users.address.geo, name: users.name },
+			}).toSQL().sql,
+		).toBe(
+			'update [embed_users] set [name] = @par0 output INSERTED.[address_street], INSERTED.[address_city], INSERTED.[address_geo_lat], INSERTED.[address_geo_lng], DELETED.[address_geo_lat], DELETED.[address_geo_lng], DELETED.[name]',
+		);
+		expect(mock.update(plain).set({ cityId: 1 }).output({ inserted: { cityId: plain.cityId } }).toSQL().sql).toBe(
+			'update [embed_plain] set [cityId] = @par0 output INSERTED.[cityId]',
+		);
+	});
+
 	test('update sets nested values, and null clears a group', () => {
 		expect(
 			mock.update(users).set({ address: { city: 'Rome', geo: null }, billing: null }).where(eq(users.id, 1)).toSQL(),
@@ -394,6 +438,44 @@ describe.skipIf(!connectionString)('embed', () => {
 
 		await db.delete(users).where(eq(users.name, 'Dst'));
 		await db.execute(sql`drop table embed_src`);
+	});
+
+	test('output returns a whole group, a nested group, and plain columns', async () => {
+		const [inserted] = await db.insert(users).output({
+			name: users.name,
+			address: users.address,
+			geo: users.address.geo,
+		}).values({
+			name: 'Out',
+			address: { street: 'A', city: 'Bern', geo: { lat: 46, lng: 7 } },
+		});
+		expect(inserted).toEqual({
+			name: 'Out',
+			address: { street: 'A', city: 'Bern', geo: { lat: 46, lng: 7 } },
+			geo: { lat: 46, lng: 7 },
+		});
+
+		const [updated] = await db.update(users).set({ address: { city: 'Basel' } }).output({
+			inserted: { address: users.address, name: users.name },
+			deleted: { geo: users.address.geo },
+		}).where(eq(users.name, 'Out'));
+		expect(updated).toEqual({
+			inserted: {
+				name: 'Out',
+				address: { street: 'A', city: 'Basel', geo: { lat: 46, lng: 7 } },
+			},
+			deleted: { geo: { lat: 46, lng: 7 } },
+		});
+
+		expect(
+			await db.delete(users).output({
+				city: users.address.city,
+				geo: users.address.geo,
+			}).where(eq(users.name, 'Out')),
+		).toEqual([{
+			city: 'Basel',
+			geo: { lat: 46, lng: 7 },
+		}]);
 	});
 });
 

@@ -19,7 +19,7 @@ import type { Placeholder, Query, SQL, SQLWrapper } from '~/sql/sql.ts';
 import type { InferInsertColumns } from '~/table.ts';
 import { mapUpdateSet, orderSelectedFields, type UpdateSet } from '~/utils.ts';
 import type { MsSqlColumn } from '../columns/common.ts';
-import type { SelectedFieldsFlat, SelectedFieldsFlatUpdate, SelectedFieldsOrdered } from './select.types.ts';
+import type { SelectedFields, SelectedFieldsFlatUpdate, SelectedFieldsOrdered } from './select.types.ts';
 
 export interface MsSqlUpdateConfig {
 	where?: SQL | undefined;
@@ -273,7 +273,7 @@ export class MsSqlUpdateBase<
 	output(
 		fields?: SelectedFieldsFlatUpdate,
 	): MsSqlUpdateWithout<AnyMsSqlUpdateBase, TDynamic, 'output'> {
-		const columns = getTableShape(this.config.table) as SelectedFieldsFlat;
+		const columns = getTableShape(this.config.table) as SelectedFields;
 
 		if (fields) {
 			const output: typeof this.config.output = {};

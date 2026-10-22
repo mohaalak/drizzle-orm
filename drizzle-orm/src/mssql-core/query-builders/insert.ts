@@ -28,7 +28,7 @@ import { type InferInsertColumns, type InferSelectModel, Table } from '~/table.t
 import { type DrizzleTypeError, orderSelectedFields } from '~/utils.ts';
 import type { AnyMsSqlColumn, MsSqlColumn } from '../columns/common.ts';
 import { QueryBuilder } from './query-builder.ts';
-import type { SelectedFieldsFlat, SelectedFieldsOrdered } from './select.types.ts';
+import type { SelectedFields, SelectedFieldsOrdered } from './select.types.ts';
 
 export interface MsSqlInsertConfig<TTable extends MsSqlTable = MsSqlTable> {
 	table: TTable;
@@ -222,11 +222,14 @@ export class MsSqlInsertBuilder<
 	 * ```
 	 */
 	output(): Omit<MsSqlInsertBuilder<TTable, TQueryResult, TPreparedQueryHKT, InferSelectModel<TTable>>, 'output'>;
-	output<SelectedFields extends SelectedFieldsFlat>(
-		fields: SelectedFields,
-	): Omit<MsSqlInsertBuilder<TTable, TQueryResult, TPreparedQueryHKT, SelectResultFields<SelectedFields>>, 'output'>;
+	output<TSelectedFields extends SelectedFields>(
+		fields: TSelectedFields,
+	): Omit<
+		MsSqlInsertBuilder<TTable, TQueryResult, TPreparedQueryHKT, SelectResultFields<TSelectedFields>>,
+		'output'
+	>;
 	output(
-		fields: SelectedFieldsFlat = getTableShape(this.table) as SelectedFieldsFlat,
+		fields: SelectedFields = getTableShape(this.table) as SelectedFields,
 	) {
 		this.config.output = orderSelectedFields<MsSqlColumn>(fields, undefined, this.dialect.codecs);
 		return this as any;
