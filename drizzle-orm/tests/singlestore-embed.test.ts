@@ -335,6 +335,25 @@ describe.skipIf(!connectionString)('embed', () => {
 		).toEqual([{ id: { value: 1 } }, { id: { value: 2 } }, { id: { value: 3 } }]);
 	});
 
+	test('$returningId returns only the primary key of a table without groups', async () => {
+		const plainReturning = singlestoreTable('embed_returning_plain', {
+			name: varchar({ length: 100 }).notNull(),
+			id: serial().primaryKey(),
+			token: varchar({ length: 10 }).$defaultFn(() => 'tok'),
+		});
+		await db.execute(sql`drop table if exists embed_returning_plain`);
+		await db.execute(
+			sql`create table embed_returning_plain (name varchar(100) not null, id serial primary key, token varchar(10))`,
+		);
+		try {
+			// a `$defaultFn` column that is not a key is not reported, and the key keeps its own name
+			expect(await db.insert(plainReturning).values([{ name: 'Ada' }, { name: 'Bob' }]).$returningId())
+				.toStrictEqual([{ id: 1 }, { id: 2 }]);
+		} finally {
+			await db.execute(sql`drop table if exists embed_returning_plain`);
+		}
+	});
+
 	test('$returningId nests a $defaultFn primary key inside a group', async () => {
 		nextReturningId = 0;
 		const inserted = await db.insert(returningDefault).values([

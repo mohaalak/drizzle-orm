@@ -1,4 +1,4 @@
-import { EmbeddedKeySeparator, flattenEmbeddedValues, type NestEmbedded } from '~/embed.ts';
+import { flattenEmbeddedValues, type NestEmbedded } from '~/embed.ts';
 import { entityKind, is } from '~/entity.ts';
 import { QueryPromise } from '~/query-promise.ts';
 import type { RunnableQuery } from '~/runnable-query.ts';
@@ -18,8 +18,8 @@ import { sql } from '~/sql/sql.ts';
 import type { InferInsertColumns, InferModelFromColumns } from '~/table.ts';
 import { Table } from '~/table.ts';
 import { usedTablesOf } from '~/used-tables.ts';
-import { type DrizzleTypeError, mapUpdateSet, orderSelectedFields } from '~/utils.ts';
-import type { AnySingleStoreColumn, SingleStoreColumn } from '../columns/common.ts';
+import { type DrizzleTypeError, mapUpdateSet } from '~/utils.ts';
+import type { AnySingleStoreColumn } from '../columns/common.ts';
 import type { SelectedFieldsOrdered } from './select.types.ts';
 import type { SingleStoreUpdateSetSource } from './update.ts';
 
@@ -286,24 +286,14 @@ export class SingleStoreInsertBase<
 		'$returningId'
 	> {
 		const returning: SelectedFieldsOrdered = [];
-		let primaryInGroup = false;
 		for (const [key, value] of Object.entries(this.config.table[Table.Symbol.Columns])) {
 			if (value.primary) {
-				if (key.includes(EmbeddedKeySeparator)) primaryInGroup = true;
 				returning.push({ field: value, fieldType: 'Column', path: [key] });
 			}
 		}
-		// No primary key inside an embed() group: keep every column. The mapper reports each
-		// value under the first column of this list, and tables without groups — composite keys
-		// included — depend on that being the table's first column. A grouped primary key is a
-		// dotted key (`'id.value'`), so the list above has to be the one that names it.
-		this.config.returning = primaryInGroup
-			? returning
-			: orderSelectedFields<SingleStoreColumn>(
-				this.config.table[Table.Symbol.Columns],
-				undefined,
-				this.dialect.codecs,
-			);
+		// Only the primary key columns, as in MySQL: every column would report a `$defaultFn` column
+		// that is not a key, and name each key after the table's first column.
+		this.config.returning = returning;
 		return this as any;
 	}
 
