@@ -1,5 +1,5 @@
 import { type Casing, getCasingFn } from '~/casing.ts';
-import type { BuildColumns, BuildExtraConfigColumns, ColumnBuilderBase } from '~/column-builder.ts';
+import { flattenEmbedBuilders, type NestEmbedded, nestEmbeddedColumns } from '~/embed.ts';
 import { entityKind } from '~/entity.ts';
 import {
 	type InferTableColumnsModels,
@@ -8,7 +8,13 @@ import {
 	type UpdateTableConfig,
 } from '~/table.ts';
 import { getSingleStoreColumnBuilders, type SingleStoreColumnBuilders } from './columns/all.ts';
-import type { SingleStoreColumn, SingleStoreColumnBuilder, SingleStoreColumns } from './columns/common.ts';
+import type {
+	SingleStoreBuildColumns,
+	SingleStoreColumn,
+	SingleStoreColumnBuilder,
+	SingleStoreColumns,
+	SingleStoreTableColumnsMap,
+} from './columns/common.ts';
 import type { AnyIndexBuilder } from './indexes.ts';
 import type { PrimaryKeyBuilder } from './primary-keys.ts';
 import type { UniqueConstraintBuilder } from './unique-constraint.ts';
@@ -46,19 +52,20 @@ export type AnySingleStoreTable<TPartial extends Partial<TableConfig> = {}> = Si
 
 export type SingleStoreTableWithColumns<T extends TableConfig> =
 	& SingleStoreTable<T>
-	& T['columns']
+	// `embed()` groups are reached as nested objects: `users.address.city`.
+	& NestEmbedded<T['columns']>
 	& InferTableColumnsModels<T['columns']>;
 
 export function singlestoreTableWithSchema<
 	TTableName extends string,
 	TSchemaName extends string | undefined,
-	TColumnsMap extends Record<string, ColumnBuilderBase>,
+	TColumnsMap extends SingleStoreTableColumnsMap,
 >(
 	name: TTableName,
 	columns: TColumnsMap | ((columnTypes: SingleStoreColumnBuilders) => TColumnsMap),
 	extraConfig:
 		| ((
-			self: BuildColumns<TTableName, TColumnsMap, 'singlestore'>,
+			self: NestEmbedded<SingleStoreBuildColumns<TTableName, TColumnsMap>>,
 		) => SingleStoreTableExtraConfig | (SingleStoreTableExtraConfigValue | SingleStoreTableExtraConfigValue[])[])
 		| undefined,
 	schema: TSchemaName,
@@ -67,7 +74,7 @@ export function singlestoreTableWithSchema<
 ): SingleStoreTableWithColumns<{
 	name: TTableName;
 	schema: TSchemaName;
-	columns: BuildColumns<TTableName, TColumnsMap, 'singlestore'>;
+	columns: SingleStoreBuildColumns<TTableName, TColumnsMap>;
 	dialect: 'singlestore';
 	isAlias: false;
 }> {
@@ -75,12 +82,19 @@ export function singlestoreTableWithSchema<
 	const rawTable = new SingleStoreTable<{
 		name: TTableName;
 		schema: TSchemaName;
-		columns: BuildColumns<TTableName, TColumnsMap, 'singlestore'>;
+		columns: SingleStoreBuildColumns<TTableName, TColumnsMap>;
 		dialect: 'singlestore';
 		isAlias: false;
 	}>(name, schema, baseName);
 
-	const parsedColumns: TColumnsMap = typeof columns === 'function' ? columns(getSingleStoreColumnBuilders()) : columns;
+	const definedColumns: TColumnsMap = typeof columns === 'function'
+		? columns(getSingleStoreColumnBuilders())
+		: columns;
+	// `embed()` groups are flattened to dotted keys: `address: embed({ city })` becomes `'address.city'`.
+	const parsedColumns = flattenEmbedBuilders(
+		definedColumns as unknown as Record<string, SingleStoreColumnBuilder>,
+		casingFn,
+	);
 
 	const builtColumns = Object.fromEntries(
 		Object.entries(parsedColumns).map(([name, colBuilderBase]) => {
@@ -89,16 +103,14 @@ export function singlestoreTableWithSchema<
 			const column = colBuilder.build(rawTable).postBuild();
 			return [name, column];
 		}),
-	) as unknown as BuildColumns<TTableName, TColumnsMap, 'singlestore'>;
+	) as unknown as SingleStoreBuildColumns<TTableName, TColumnsMap>;
 
-	const table = Object.assign(rawTable, builtColumns);
+	const shape = nestEmbeddedColumns(builtColumns as SingleStoreColumns);
+	const table = Object.assign(rawTable, shape);
 
 	table[Table.Symbol.Columns] = builtColumns;
-	table[Table.Symbol.ExtraConfigColumns] = builtColumns as unknown as BuildExtraConfigColumns<
-		TTableName,
-		TColumnsMap,
-		'singlestore'
-	>;
+	if (shape !== builtColumns) table[Table.Symbol.Shape] = shape;
+	table[Table.Symbol.ExtraConfigColumns] = shape;
 
 	if (extraConfig) {
 		table[SingleStoreTable.Symbol.ExtraConfigBuilder] = extraConfig as unknown as (
@@ -112,34 +124,34 @@ export function singlestoreTableWithSchema<
 export interface SingleStoreTableFn<TSchemaName extends string | undefined = undefined> {
 	<
 		TTableName extends string,
-		TColumnsMap extends Record<string, ColumnBuilderBase>,
+		TColumnsMap extends SingleStoreTableColumnsMap,
 	>(
 		name: TTableName,
 		columns: TColumnsMap,
 		extraConfig?: (
-			self: BuildColumns<TTableName, TColumnsMap, 'singlestore'>,
+			self: NestEmbedded<SingleStoreBuildColumns<TTableName, TColumnsMap>>,
 		) => (SingleStoreTableExtraConfigValue | SingleStoreTableExtraConfigValue[])[],
 	): SingleStoreTableWithColumns<{
 		name: TTableName;
 		schema: TSchemaName;
-		columns: BuildColumns<TTableName, TColumnsMap, 'singlestore'>;
+		columns: SingleStoreBuildColumns<TTableName, TColumnsMap>;
 		dialect: 'singlestore';
 		isAlias: false;
 	}>;
 
 	<
 		TTableName extends string,
-		TColumnsMap extends Record<string, ColumnBuilderBase>,
+		TColumnsMap extends SingleStoreTableColumnsMap,
 	>(
 		name: TTableName,
 		columns: (columnTypes: SingleStoreColumnBuilders) => TColumnsMap,
 		extraConfig?: (
-			self: BuildColumns<TTableName, TColumnsMap, 'singlestore'>,
+			self: NestEmbedded<SingleStoreBuildColumns<TTableName, TColumnsMap>>,
 		) => (SingleStoreTableExtraConfigValue | SingleStoreTableExtraConfigValue[])[],
 	): SingleStoreTableWithColumns<{
 		name: TTableName;
 		schema: TSchemaName;
-		columns: BuildColumns<TTableName, TColumnsMap, 'singlestore'>;
+		columns: SingleStoreBuildColumns<TTableName, TColumnsMap>;
 		dialect: 'singlestore';
 		isAlias: false;
 	}>;
@@ -167,15 +179,15 @@ export interface SingleStoreTableFn<TSchemaName extends string | undefined = und
 	 */
 	<
 		TTableName extends string,
-		TColumnsMap extends Record<string, ColumnBuilderBase>,
+		TColumnsMap extends SingleStoreTableColumnsMap,
 	>(
 		name: TTableName,
 		columns: TColumnsMap,
-		extraConfig?: (self: BuildColumns<TTableName, TColumnsMap, 'singlestore'>) => SingleStoreTableExtraConfig,
+		extraConfig?: (self: NestEmbedded<SingleStoreBuildColumns<TTableName, TColumnsMap>>) => SingleStoreTableExtraConfig,
 	): SingleStoreTableWithColumns<{
 		name: TTableName;
 		schema: TSchemaName;
-		columns: BuildColumns<TTableName, TColumnsMap, 'singlestore'>;
+		columns: SingleStoreBuildColumns<TTableName, TColumnsMap>;
 		dialect: 'singlestore';
 		isAlias: false;
 	}>;
@@ -204,15 +216,15 @@ export interface SingleStoreTableFn<TSchemaName extends string | undefined = und
 	 */
 	<
 		TTableName extends string,
-		TColumnsMap extends Record<string, ColumnBuilderBase>,
+		TColumnsMap extends SingleStoreTableColumnsMap,
 	>(
 		name: TTableName,
 		columns: (columnTypes: SingleStoreColumnBuilders) => TColumnsMap,
-		extraConfig?: (self: BuildColumns<TTableName, TColumnsMap, 'singlestore'>) => SingleStoreTableExtraConfig,
+		extraConfig?: (self: NestEmbedded<SingleStoreBuildColumns<TTableName, TColumnsMap>>) => SingleStoreTableExtraConfig,
 	): SingleStoreTableWithColumns<{
 		name: TTableName;
 		schema: TSchemaName;
-		columns: BuildColumns<TTableName, TColumnsMap, 'singlestore'>;
+		columns: SingleStoreBuildColumns<TTableName, TColumnsMap>;
 		dialect: 'singlestore';
 		isAlias: false;
 	}>;
