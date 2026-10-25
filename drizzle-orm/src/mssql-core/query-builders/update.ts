@@ -1,5 +1,11 @@
 import type { GetColumnData } from '~/column.ts';
-import { getTableShape, type NestEmbedded, type NestEmbeddedPartial } from '~/embed.ts';
+import {
+	getTableShape,
+	type HasEmbeddedUnions,
+	type NestEmbedded,
+	type NestEmbeddedPartial,
+	type NestModelPartial,
+} from '~/embed.ts';
 import { entityKind, is } from '~/entity.ts';
 import type { MsSqlDialect } from '~/mssql-core/dialect.ts';
 import type {
@@ -33,14 +39,18 @@ export interface MsSqlUpdateConfig {
 }
 
 export type MsSqlUpdateSetSource<TTable extends MsSqlTable> =
-	& NestEmbeddedPartial<
-		{
-			[Key in keyof InferInsertColumns<TTable>]?:
-				| GetColumnData<TTable['_']['columns'][Key], 'query'>
-				| Placeholder
-				| SQL;
-		}
-	>
+	& (HasEmbeddedUnions<TTable['_']['columns']> extends true ? NestModelPartial<
+			Pick<TTable['_']['columns'], keyof InferInsertColumns<TTable> & string>,
+			Placeholder | SQL
+		>
+		: NestEmbeddedPartial<
+			{
+				[Key in keyof InferInsertColumns<TTable>]?:
+					| GetColumnData<TTable['_']['columns'][Key], 'query'>
+					| Placeholder
+					| SQL;
+			}
+		>)
 	& {};
 
 export type NonUndefinedKeysOnly<T> =
