@@ -1,7 +1,6 @@
 import { type Casing, getCasingFn } from '~/casing.ts';
-import { flattenEmbedBuilders, type NestEmbedded, nestEmbeddedColumns } from '~/embed.ts';
+import { flattenEmbedBuilders, type NestEmbedded, nestEmbeddedColumns, type NestModel } from '~/embed.ts';
 import { entityKind } from '~/entity.ts';
-import type { InferModelFromColumns } from '~/table.ts';
 import { Table, type TableConfig as TableConfigBase, type UpdateTableConfig } from '~/table.ts';
 import type { CheckBuilder } from './checks.ts';
 import { getPgColumnBuilders, type PgColumnsBuilders } from './columns/all.ts';
@@ -67,8 +66,8 @@ export type PgTableWithColumns<T extends TableConfig> =
 	// `embed()` groups are reached as nested objects: `users.address.city`.
 	& NestEmbedded<T['columns']>
 	& {
-		readonly $inferSelect: NestEmbedded<InferModelFromColumns<T['columns'], 'select'>>;
-		readonly $inferInsert: NestEmbedded<InferModelFromColumns<T['columns'], 'insert'>>;
+		readonly $inferSelect: NestModel<T['columns'], 'select'>;
+		readonly $inferInsert: NestModel<T['columns'], 'insert'>;
 	}
 	& {
 		/** @deprecated use `pgTable.withRLS()` instead*/

@@ -3,7 +3,13 @@ import type { Cache } from './cache/core/cache.ts';
 import type { CodecsCollection } from './codecs.ts';
 import type { AnyColumn } from './column.ts';
 import { Column } from './column.ts';
-import { flattenEmbeddedValues, getTableShape, nestReturningIdValue } from './embed.ts';
+import {
+	flattenEmbeddedValues,
+	foldEmbeddedUnionRows,
+	getTableShape,
+	nestReturningIdValue,
+	selectedFieldsUnionSites,
+} from './embed.ts';
 import { is } from './entity.ts';
 import type { Logger } from './logger.ts';
 import type { SelectedFieldsFlat, SelectedFieldsOrdered } from './operations.ts';
@@ -208,7 +214,7 @@ export function makeJitQueryMapper<TResult>(
 		{ body: `function jitQueryMapper (rows) {\n${internals}\n}` },
 	) as RowsMapper<TResult>;
 
-	return fn;
+	return foldEmbeddedUnionRows(fn, selectedFieldsUnionSites(columns));
 }
 
 /** @internal */
@@ -273,60 +279,63 @@ export function makeDefaultQueryMapper<TResult>(
 		? nullablePathTargets(columns, nullableObjectPaths)
 		: undefined;
 
-	return ((rows) => {
-		const { length: rowLength } = rows;
-		const output: TResult[] = new Array(rowLength);
-		for (let j = 0; j < rowLength; ++j) {
-			const row = rows[j]!;
+	return foldEmbeddedUnionRows(
+		((rows) => {
+			const { length: rowLength } = rows;
+			const output: TResult[] = new Array(rowLength);
+			for (let j = 0; j < rowLength; ++j) {
+				const row = rows[j]!;
 
-			const result: Record<string, any> = {};
+				const result: Record<string, any> = {};
 
-			for (let i = 0; i < columns.length; ++i) {
-				const { path } = columns[i]!;
+				for (let i = 0; i < columns.length; ++i) {
+					const { path } = columns[i]!;
 
-				let node = result;
-				for (let p = 0; p < path.length; ++p) {
-					const pathChunk = path[p]!;
-					if (p < path.length - 1) {
-						if (!(pathChunk in node)) {
-							node[pathChunk] = {};
-						}
-						node = node[pathChunk];
-					} else {
-						const decoder = interpretedData[i]!;
-						const rawValue = row[i]!;
-						node[pathChunk] = rawValue === null
-							? null
-							: decoder
-							? decoder(rawValue)
-							: rawValue;
-					}
-				}
-			}
-
-			// Nullify every top-level nullable group whose leaves are all null on this row.
-			if (targets) {
-				for (let i = 0; i < targets.length; ++i) {
-					const { key, leaves } = targets[i]!;
-
-					let allNull = true;
-					for (let j = 0; j < leaves.length; ++j) {
-						const i = leaves[j]!;
-
-						if (row[i] !== null) {
-							allNull = false;
-							break;
+					let node = result;
+					for (let p = 0; p < path.length; ++p) {
+						const pathChunk = path[p]!;
+						if (p < path.length - 1) {
+							if (!(pathChunk in node)) {
+								node[pathChunk] = {};
+							}
+							node = node[pathChunk];
+						} else {
+							const decoder = interpretedData[i]!;
+							const rawValue = row[i]!;
+							node[pathChunk] = rawValue === null
+								? null
+								: decoder
+								? decoder(rawValue)
+								: rawValue;
 						}
 					}
-					if (allNull) result[key] = null;
 				}
+
+				// Nullify every top-level nullable group whose leaves are all null on this row.
+				if (targets) {
+					for (let i = 0; i < targets.length; ++i) {
+						const { key, leaves } = targets[i]!;
+
+						let allNull = true;
+						for (let j = 0; j < leaves.length; ++j) {
+							const i = leaves[j]!;
+
+							if (row[i] !== null) {
+								allNull = false;
+								break;
+							}
+						}
+						if (allNull) result[key] = null;
+					}
+				}
+
+				output[j] = result as TResult;
 			}
 
-			output[j] = result as TResult;
-		}
-
-		return output;
-	}) as RowsMapper<TResult>;
+			return output;
+		}) as RowsMapper<TResult>,
+		selectedFieldsUnionSites(columns),
+	);
 }
 
 export function make$ReturningResponseMapper(

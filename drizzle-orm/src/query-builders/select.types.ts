@@ -1,6 +1,6 @@
 import type { ChangeColumnTableName, ColumnType, Dialect } from '~/column-builder.ts';
 import type { AnyColumn, Column, ColumnBaseConfig, GetColumnData, UpdateColConfig } from '~/column.ts';
-import type { NestEmbedded } from '~/embed.ts';
+import type { EmbeddedUnionTagKey, NestEmbedded } from '~/embed.ts';
 import type { SelectedFields } from '~/operations.ts';
 import type { ColumnsSelection, SQL } from '~/sql/sql.ts';
 import type { Subquery } from '~/subquery.ts';
@@ -65,19 +65,31 @@ type SelectPartialResult<TFields, TNullability extends Record<string, JoinNullab
 					'You can only select one column in the subquery'
 				>
 			: TField extends Record<string, any>
-				? TField[keyof TField] extends SQL | SQL.Aliased ? SelectPartialResult<TField, TNullability>
-				: TField[keyof TField] extends AnyColumn<{ tableName: infer TTableName extends string }> | SQL | SQL.Aliased
-					? Not<IsUnion<TTableName>> extends true ? ApplyNullability<
-							SelectResultFields<TField>,
-							TTableName extends keyof TNullability ? TNullability[TTableName] : 'nullable'
-						>
-					: SelectPartialResult<TField, TNullability>
-					// A group holding further groups, such as an `embed()` group with one nested in it.
-				: SelectPartialResult<TField, TNullability>
+				? [EmbeddedUnionTagKey<TField>] extends [never] ? SelectPartialGroupResult<TField, TNullability>
+					// A `taggedUnion()` group is null when its table is, like the tag column it is read by.
+				: TField[EmbeddedUnionTagKey<TField>] extends AnyColumn<{ tableName: infer TTableName extends string }>
+					? ApplyNullability<
+						SelectResultField<TField>,
+						TTableName extends keyof TNullability ? TNullability[TTableName] : 'nullable'
+					>
+				: never
 			: never
 			: never;
 	}
 	: never;
+
+type SelectPartialGroupResult<
+	TField extends Record<string, any>,
+	TNullability extends Record<string, JoinNullability>,
+> = TField[keyof TField] extends SQL | SQL.Aliased ? SelectPartialResult<TField, TNullability>
+	: TField[keyof TField] extends AnyColumn<{ tableName: infer TTableName extends string }> | SQL | SQL.Aliased
+		? Not<IsUnion<TTableName>> extends true ? ApplyNullability<
+				SelectResultFields<TField>,
+				TTableName extends keyof TNullability ? TNullability[TTableName] : 'nullable'
+			>
+		: SelectPartialResult<TField, TNullability>
+	// A group holding further groups, such as an `embed()` group with one nested in it.
+	: SelectPartialResult<TField, TNullability>;
 
 export type MapColumnsToTableAlias<
 	TColumns extends ColumnsSelection,
@@ -188,8 +200,16 @@ export type SelectResultField<T, TDeep extends boolean = true> = T extends Drizz
 		? Equal<TDeep, true> extends true ? SelectResultField<NestEmbedded<T['_']['columns']>, false> : never
 	: T extends Column<any> ? GetColumnData<T>
 	: T extends SQL | SQL.Aliased ? T['_']['type']
-	: T extends Record<string, any> ? SelectResultFields<T, true>
+	: T extends Record<string, any> ? [EmbeddedUnionTagKey<T>] extends [never] ? SelectResultFields<T, true>
+		: SelectUnionResult<T, EmbeddedUnionTagKey<T>>
 	: never;
+
+/**
+ * A selected `taggedUnion()` group: one object per variant, holding the tag and that variant's columns.
+ */
+type SelectUnionResult<T extends Record<string, any>, TKey extends keyof T & string, TTags = GetColumnData<T[TKey]>> =
+	TTags extends string ? Simplify<{ [K in TKey]: TTags } & (TTags extends keyof T ? SelectResultFields<T[TTags]> : {})>
+		: never;
 
 export type SelectResultFields<TSelectedFields, TDeep extends boolean = true> = Simplify<
 	{

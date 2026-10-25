@@ -1,5 +1,11 @@
 import type { GetColumnData } from '~/column.ts';
-import { getTableShape, type NestEmbedded, type NestEmbeddedPartial } from '~/embed.ts';
+import {
+	getTableShape,
+	type HasEmbeddedUnions,
+	type NestEmbedded,
+	type NestEmbeddedPartial,
+	type NestModelPartial,
+} from '~/embed.ts';
 import { entityKind, is } from '~/entity.ts';
 import type { PgDialect } from '~/pg-core/dialect.ts';
 import type { PgQueryResultHKT, PgQueryResultKind, PgSession } from '~/pg-core/session.ts';
@@ -64,16 +70,20 @@ export type PgUpdateSetSource<
 	TTable extends PgTable,
 	TModel extends Record<string, any> = InferModelFromColumns<TTable['_']['columns'], 'insert'>,
 > =
-	& NestEmbeddedPartial<
-		{
-			[Key in keyof TModel & string]?:
-				| GetColumnData<TTable['_']['columns'][Key]>
-				| SQL
-				| PgColumn
-				| Placeholder
-				| undefined;
-		}
-	>
+	& (HasEmbeddedUnions<TTable['_']['columns']> extends true ? NestModelPartial<
+			Pick<TTable['_']['columns'], keyof TModel & string>,
+			SQL | PgColumn | Placeholder | undefined
+		>
+		: NestEmbeddedPartial<
+			{
+				[Key in keyof TModel & string]?:
+					| GetColumnData<TTable['_']['columns'][Key]>
+					| SQL
+					| PgColumn
+					| Placeholder
+					| undefined;
+			}
+		>)
 	& {};
 
 export interface PgUpdateBuilderConstructor {

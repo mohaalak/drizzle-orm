@@ -3,7 +3,7 @@ import type * as V1 from './_relations.ts';
 import { OriginalColumn } from './column-common.ts';
 import type { AnyColumn } from './column.ts';
 import { Column } from './column.ts';
-import { EmbeddedColumns } from './embed.ts';
+import { EmbeddedColumns, EmbeddedUnionKey } from './embed.ts';
 import { entityKind, is } from './entity.ts';
 import { chunkKindOf, chunkKinds, isChunk, isSQLWrapper, type Name, SQL, sql } from './sql/sql.ts';
 import type { Subquery } from './subquery.ts';
@@ -210,6 +210,9 @@ export class TableAliasProxyHandler<T extends Table | View> implements ProxyHand
 				);
 			}
 			(result as Record<string, unknown>)[key] = aliased;
+		}
+		if (EmbeddedUnionKey in group) {
+			(result as Record<symbol, unknown>)[EmbeddedUnionKey] = (group as Record<symbol, unknown>)[EmbeddedUnionKey];
 		}
 
 		memo.set(group, result);

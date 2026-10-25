@@ -1,12 +1,12 @@
 import type { ColumnBuilderBase } from './column-builder.ts';
-import type { Column } from './column.ts';
+import type { Column, Columns, GetColumnData } from './column.ts';
 import { entityKind, is } from './entity.ts';
 import type { BuildRelationalQueryResult, RelationalRowsMapper } from './relations.ts';
 import type { SQL } from './sql/sql.ts';
 import { isSQLWrapper } from './sql/sql.ts';
 import type { Subquery } from './subquery.ts';
-import { Table } from './table.ts';
-import type { DrizzleTypeError, IsNever, JoinUnion, Simplify } from './utils.ts';
+import { type InferModelFromColumns, Table } from './table.ts';
+import type { Assume, DrizzleTypeError, IsNever, JoinUnion, Simplify } from './utils.ts';
 
 /**
  * Separates the segments of an embedded column's key in the table's flat column map:
@@ -75,6 +75,158 @@ export function embed<TColumns extends Record<string, ColumnBuilderBase | EmbedB
 	return new EmbedBuilder(columns, config);
 }
 
+/** The columns of one `taggedUnion()` variant: column builders, `embed()` groups and nested unions. */
+export type UnionVariantColumns = Record<string, ColumnBuilderBase | EmbedBuilder<any>>;
+
+/**
+ * The columns of one `taggedUnion()` variant. Its columns are named without the variant's name, and are
+ * nullable in the database, since a row of another variant leaves them empty.
+ */
+export class UnionVariantBuilder<TColumns extends UnionVariantColumns = any> extends EmbedBuilder<TColumns> {
+	static override readonly [entityKind]: string = 'UnionVariantBuilder';
+
+	declare readonly _: {
+		readonly columns: TColumns;
+		readonly unionVariant: true;
+	};
+
+	constructor(columns: TColumns) {
+		super(columns, { prefix: '' });
+	}
+}
+
+/**
+ * A `taggedUnion()` group. It is an `embed()` group holding the tag column under the union's key and one
+ * {@link UnionVariantBuilder} group per variant, so it is stored, named and referenced like one.
+ */
+export class UnionBuilder<
+	TKey extends string = string,
+	TColumns extends Record<string, ColumnBuilderBase | EmbedBuilder<any>> = any,
+> extends EmbedBuilder<TColumns> {
+	static override readonly [entityKind]: string = 'UnionBuilder';
+
+	declare readonly _: {
+		readonly columns: TColumns;
+		readonly unionKey: TKey;
+	};
+
+	constructor(
+		/** @internal */
+		readonly unionKey: TKey,
+		columns: TColumns,
+		config?: EmbedConfig,
+	) {
+		super(columns, config);
+	}
+}
+
+/**
+ * The tag column of a `taggedUnion()`: it holds the name of the row's variant and is always written.
+ */
+export type UnionTagBuilder<TBuilder extends ColumnBuilderBase, TTags extends string, TKey extends string> = {
+	_: Simplify<Omit<TBuilder['_'], '$type' | 'notNull'> & { $type: TTags; notNull: true; unionTag: TKey }>;
+};
+
+/** The columns a `taggedUnion()` group holds: its tag column and one group per variant. */
+export type UnionColumns<
+	TKey extends string,
+	TTag extends ColumnBuilderBase,
+	TVariants extends Record<string, UnionVariantColumns>,
+> = Simplify<
+	& { [K in TKey]: UnionTagBuilder<TTag, keyof TVariants & string, TKey> }
+	& { [K in keyof TVariants & string]: UnionVariantBuilder<TVariants[K]> }
+>;
+
+/**
+ * A tagged union of column groups. The tag column under `key` holds which variant a row is, and only
+ * that variant's columns are filled. Reading a row gives `{ [key]: variant, ...variantColumns }`.
+ *
+ * The columns stay flat in the database. The tag column is named like any grouped column
+ * (`uploader` + `kind` → `uploader_kind`) and is `NOT NULL`. A variant's columns take the union's
+ * prefix without the variant's name (`uploader_staffId`), and are always nullable. Two variants
+ * that would give columns the same name must name one of them themselves.
+ *
+ * Writing a variant fills the tag column and clears the columns of every other variant.
+ *
+ * @example
+ * ```ts
+ * const files = pgTable('files', {
+ * 	id: serial().primaryKey(),
+ * 	uploader: taggedUnion('kind', text(), {
+ * 		staff: { staffId: integer().notNull() },
+ * 		parent: { parentId: integer().notNull() },
+ * 		system: {},
+ * 	}),
+ * });
+ * // columns: "id", "uploader_kind", "uploader_staffId", "uploader_parentId"
+ *
+ * await db.insert(files).values({ uploader: { kind: 'staff', staffId: 1 } });
+ * const rows = await db.select().from(files).where(eq(files.uploader.kind, 'staff'));
+ * if (rows[0].uploader.kind === 'staff') rows[0].uploader.staffId; // number
+ * ```
+ */
+export function taggedUnion<
+	TKey extends string,
+	TTag extends ColumnBuilderBase,
+	TVariants extends Record<string, UnionVariantColumns>,
+>(
+	key: TKey,
+	tag: TTag,
+	variants: TVariants & { [K in TKey]?: never },
+	config?: EmbedConfig,
+): UnionBuilder<TKey, UnionColumns<TKey, TTag, TVariants>> {
+	if (Object.prototype.hasOwnProperty.call(variants, key)) {
+		throw new Error(`A union variant cannot be named "${key}", the key of its tag column`);
+	}
+
+	const columns: Record<string, ColumnBuilderBase | EmbedBuilder> = { [key]: tag };
+	for (const [name, fields] of Object.entries(variants as Record<string, UnionVariantColumns>)) {
+		columns[name] = new UnionVariantBuilder(fields);
+	}
+	return new UnionBuilder(key, columns as UnionColumns<TKey, TTag, TVariants>, config);
+}
+
+/**
+ * Marks the group holding a `taggedUnion()`'s columns with the key of its tag column.
+ *
+ * @internal
+ */
+export const EmbeddedUnionKey = Symbol.for('drizzle:EmbeddedUnionKey');
+
+/** @internal */
+export interface EmbeddedUnionInfo {
+	/** The key of the tag column within the union's group. */
+	readonly key: string;
+	readonly tags: readonly string[];
+}
+
+/**
+ * A column's place in a `taggedUnion()`: its path from the union's group, `['kind']` for the tag column
+ * and `['staff', 'staffId']` for a variant's column.
+ *
+ * @internal
+ */
+export interface EmbeddedUnionMembership {
+	readonly union: EmbeddedUnionInfo;
+	readonly path: readonly string[];
+}
+
+/**
+ * The unions a column belongs to, outermost first. A column of a union nested in another union's
+ * variant belongs to both.
+ *
+ * @internal
+ */
+export function embeddedUnionsOf(column: unknown): readonly EmbeddedUnionMembership[] | undefined {
+	return (column as { config?: { embeddedUnions?: EmbeddedUnionMembership[] } } | undefined)?.config?.embeddedUnions;
+}
+
+interface ActiveUnion {
+	readonly info: EmbeddedUnionInfo;
+	/** The union's dotted path, followed by the separator. */
+	readonly root: string;
+}
+
 /**
  * Turns a table definition that may contain `embed()` groups into a flat map of builders keyed
  * by their dotted path, and names each embedded builder after its prefixed path.
@@ -87,9 +239,27 @@ export function flattenEmbedBuilders<TBuilder extends ColumnBuilderBase>(
 	keyPrefix = '',
 	namePrefix = '',
 	result: Record<string, TBuilder> = {},
+	unions: readonly ActiveUnion[] = [],
+	inVariant = false,
 ): Record<string, TBuilder> {
 	for (const [key, value] of Object.entries(columns)) {
 		const path = keyPrefix + key;
+		if (is(value, UnionBuilder)) {
+			const info: EmbeddedUnionInfo = {
+				key: value.unionKey,
+				tags: Object.keys(value.columns).filter((name) => name !== value.unionKey),
+			};
+			flattenEmbedBuilders(
+				value.columns,
+				casingFn,
+				path + EmbeddedKeySeparator,
+				namePrefix + (value.config.prefix ?? `${key}_`),
+				result,
+				[...unions, { info, root: path + EmbeddedKeySeparator }],
+				inVariant,
+			);
+			continue;
+		}
 		if (is(value, EmbedBuilder)) {
 			flattenEmbedBuilders(
 				value.columns,
@@ -97,6 +267,8 @@ export function flattenEmbedBuilders<TBuilder extends ColumnBuilderBase>(
 				path + EmbeddedKeySeparator,
 				namePrefix + (value.config.prefix ?? `${key}_`),
 				result,
+				unions,
+				inVariant || is(value, UnionVariantBuilder),
 			);
 			continue;
 		}
@@ -105,10 +277,48 @@ export function flattenEmbedBuilders<TBuilder extends ColumnBuilderBase>(
 		if (keyPrefix) {
 			(value as any).setName(namePrefix + key, casingFn);
 		}
+		if (unions.length) markUnionMember(value as ColumnBuilderBase, path, unions, inVariant);
 		result[path] = value as TBuilder;
 	}
 
+	if (!keyPrefix) assertUniqueUnionColumnNames(result);
 	return result;
+}
+
+function markUnionMember(builder: ColumnBuilderBase, path: string, unions: readonly ActiveUnion[], inVariant: boolean) {
+	const config = (builder as unknown as { config: Record<string, any> }).config;
+	config['embeddedUnions'] = unions.map((union): EmbeddedUnionMembership => ({
+		union: union.info,
+		path: path.slice(union.root.length).split(EmbeddedKeySeparator),
+	}));
+
+	if (inVariant) {
+		// Another variant's rows leave this column empty.
+		if (config['primaryKey']) {
+			throw new Error(`Column "${path}" is in a union variant, so it cannot be a primary key`);
+		}
+		config['notNull'] = false;
+		return;
+	}
+
+	const innermost = unions.at(-1)!;
+	if (path === innermost.root + innermost.info.key) config['notNull'] = true;
+}
+
+function assertUniqueUnionColumnNames(builders: Record<string, ColumnBuilderBase>) {
+	const pathByName = new Map<string, string>();
+	for (const [path, builder] of Object.entries(builders)) {
+		const config = (builder as unknown as { config: { name?: string; embeddedUnions?: unknown } }).config;
+		if (!config.embeddedUnions || !config.name) continue;
+
+		const other = pathByName.get(config.name);
+		if (other !== undefined) {
+			throw new Error(
+				`Columns "${other}" and "${path}" of a union are both named "${config.name}". Give one of them its own name`,
+			);
+		}
+		pathByName.set(config.name, path);
+	}
 }
 
 /**
@@ -142,10 +352,22 @@ export function nestEmbeddedColumns<TColumns extends Record<string, Column>>(
 		for (const segment of segments.slice(0, -1)) {
 			target = (target[segment] ??= new EmbeddedColumns()) as EmbeddedColumns;
 		}
-		target[segments.at(-1)!] = columns[key]!;
+		const column = columns[key]!;
+		target[segments.at(-1)!] = column;
+
+		// The tag column marks the group it sits in as a union.
+		const own = embeddedUnionsOf(column)?.at(-1);
+		if (own && own.path.length === 1 && own.path[0] === own.union.key) {
+			(target as Record<symbol, unknown>)[EmbeddedUnionKey] = own.union.key;
+		}
 	}
 
 	return result;
+}
+
+/** @internal */
+export function embeddedUnionKeyOf(group: unknown): string | undefined {
+	return (group as Record<symbol, string | undefined>)[EmbeddedUnionKey];
 }
 
 /** @internal */
@@ -241,6 +463,11 @@ export function flattenEmbeddedValues(table: Table, value: Record<string, unknow
 	if (!hasEmbeddedColumns(table)) return value;
 
 	const result: Record<string, unknown> = {};
+	const clear = (groupPath: string) => {
+		for (const leaf of Object.keys(table[Table.Symbol.Columns])) {
+			if (leaf.startsWith(groupPath)) result[leaf] = null;
+		}
+	};
 	const visit = (shape: Record<string, Column | EmbeddedColumns>, source: Record<string, unknown>, path: string) => {
 		for (const [key, entry] of Object.entries(source)) {
 			const node = shape[key];
@@ -249,11 +476,10 @@ export function flattenEmbeddedValues(table: Table, value: Record<string, unknow
 				continue;
 			}
 			if (entry === undefined) continue;
+			const groupPath = path + key + EmbeddedKeySeparator;
 			if (entry === null) {
 				// Writing `null` to a group clears every column in it.
-				for (const leaf of Object.keys(table[Table.Symbol.Columns])) {
-					if (leaf.startsWith(path + key + EmbeddedKeySeparator)) result[leaf] = null;
-				}
+				clear(groupPath);
 				continue;
 			}
 			if (!isPlainObject(entry)) {
@@ -263,7 +489,28 @@ export function flattenEmbeddedValues(table: Table, value: Record<string, unknow
 					}" must be written as an object of its columns`,
 				);
 			}
-			visit(node, entry, path + key + EmbeddedKeySeparator);
+
+			const unionKey = embeddedUnionKeyOf(node);
+			if (unionKey === undefined) {
+				visit(node, entry, groupPath);
+				continue;
+			}
+
+			// A union is written as one variant: its tag, its columns, and every other variant cleared.
+			const tags = embeddedUnionsOf(node[unionKey])!.at(-1)!.union.tags;
+			const { [unionKey]: tag, ...fields } = entry;
+			if (typeof tag !== 'string' || !tags.includes(tag)) {
+				throw new Error(
+					`Union "${path}${key}" in table "${
+						table[Table.Symbol.Name]
+					}" must be written with "${unionKey}" set to one of ${tags.map((name) => `"${name}"`).join(', ')}`,
+				);
+			}
+			result[groupPath + unionKey] = tag;
+			for (const other of tags) {
+				if (other !== tag) clear(groupPath + other + EmbeddedKeySeparator);
+			}
+			visit((node[tag] ?? new EmbeddedColumns()) as EmbeddedColumns, fields, groupPath + tag + EmbeddedKeySeparator);
 		}
 	};
 	visit(getTableShape(table), value, '');
@@ -271,9 +518,113 @@ export function flattenEmbeddedValues(table: Table, value: Record<string, unknow
 	return result;
 }
 
+/**
+ * Where a `taggedUnion()` group sits in a result row, found from where its tag column was selected.
+ *
+ * @internal
+ */
+export interface EmbeddedUnionSite {
+	readonly path: readonly string[];
+	readonly union: EmbeddedUnionInfo;
+}
+
+/**
+ * Finds the `taggedUnion()` groups a selection reads whole enough to fold: every place a union's tag column
+ * is selected under its own key, inside the group it was selected with. Deepest first, so a union
+ * in another union's variant is folded before the variant is lifted out. `undefined` when there
+ * are none.
+ *
+ * @internal
+ */
+export function embeddedUnionSites(
+	fields: readonly { readonly path: readonly string[]; readonly column: unknown }[],
+): EmbeddedUnionSite[] | undefined {
+	let sites: EmbeddedUnionSite[] | undefined;
+	for (const { path, column } of fields) {
+		const own = embeddedUnionsOf(column)?.at(-1);
+		if (!own || own.path.length !== 1 || own.path[0] !== own.union.key || path.at(-1) !== own.union.key) continue;
+		(sites ??= []).push({ path: path.slice(0, -1), union: own.union });
+	}
+
+	return sites?.sort((a, b) => b.path.length - a.path.length);
+}
+
+/** @internal */
+export function selectedFieldsUnionSites(
+	fields: readonly { readonly path: string[]; readonly fieldType: string; readonly field: unknown }[],
+): EmbeddedUnionSite[] | undefined {
+	return embeddedUnionSites(
+		fields.map(({ path, fieldType, field }) => ({ path, column: fieldType === 'Column' ? field : undefined })),
+	);
+}
+
+/**
+ * `{ kind: 'staff', staff: { staffId: 1 }, parent: { parentId: null } }` →
+ * `{ kind: 'staff', staffId: 1 }`. Keys that are not a variant's group are kept.
+ */
+function foldUnion(value: Record<string, unknown>, { key, tags }: EmbeddedUnionInfo): Record<string, unknown> {
+	const result: Record<string, unknown> = {};
+	for (const [name, entry] of Object.entries(value)) {
+		if (tags.includes(name) && isPlainObject(entry)) continue;
+		result[name] = entry;
+	}
+
+	const tag = value[key];
+	const variant = typeof tag === 'string' && tags.includes(tag) ? value[tag] : undefined;
+	if (isPlainObject(variant)) Object.assign(result, variant);
+	return result;
+}
+
+/**
+ * Folds every `taggedUnion()` group of a nested result row into the variant it holds. Returns the row,
+ * or a new one when the union sits at the row's root.
+ *
+ * @internal
+ */
+export function foldEmbeddedUnions(
+	row: Record<string, unknown>,
+	sites: readonly EmbeddedUnionSite[],
+): Record<string, unknown> {
+	for (const { path, union } of sites) {
+		if (path.length === 0) {
+			row = foldUnion(row, union);
+			continue;
+		}
+
+		let parent: unknown = row;
+		for (let i = 0; i < path.length - 1 && isPlainObject(parent); i++) parent = parent[path[i]!];
+		if (!isPlainObject(parent)) continue;
+
+		const value = parent[path.at(-1)!];
+		if (isPlainObject(value)) parent[path.at(-1)!] = foldUnion(value, union);
+	}
+	return row;
+}
+
+/**
+ * Wraps a rows mapper so the `taggedUnion()` groups it nests come back folded into the variant they
+ * hold. Returns the mapper untouched for selections that read no union.
+ *
+ * @internal
+ */
+export function foldEmbeddedUnionRows<TMapper extends (rows: any) => any>(
+	mapper: TMapper,
+	sites: readonly EmbeddedUnionSite[] | undefined,
+): TMapper {
+	if (!sites) return mapper;
+
+	return Object.assign((rows: unknown) => {
+		const result = mapper(rows) as Record<string, unknown>[];
+		for (let i = 0; i < result.length; i++) result[i] = foldEmbeddedUnions(result[i]!, sites);
+		return result;
+	}, mapper);
+}
+
 interface EmbeddedRowsPlan {
 	/** Columns selected under a dotted key, as the path to nest each one at. */
 	readonly columns: readonly (readonly [key: string, path: readonly string[]])[];
+	/** `taggedUnion()` groups to fold once the columns are nested. */
+	readonly unions: readonly EmbeddedUnionSite[] | undefined;
 	/** Loaded relations whose rows carry embedded columns of their own. */
 	readonly relations: readonly (readonly [key: string, plan: EmbeddedRowsPlan])[];
 }
@@ -284,6 +635,7 @@ function embeddedRowsPlan(
 	separators: readonly string[],
 ): EmbeddedRowsPlan | undefined {
 	const columns: [string, string[]][] = [];
+	const unionFields: { path: string[]; column: unknown }[] = [];
 	const relations: [string, EmbeddedRowsPlan][] = [];
 	for (const item of selection) {
 		if (item.selection) {
@@ -293,20 +645,23 @@ function embeddedRowsPlan(
 			let path = [item.key];
 			for (const separator of separators) path = path.flatMap((segment) => segment.split(separator));
 			columns.push([item.key, path]);
+			unionFields.push({ path, column: item.field });
 		}
 	}
 
-	return columns.length || relations.length ? { columns, relations } : undefined;
+	return columns.length || relations.length
+		? { columns, unions: embeddedUnionSites(unionFields), relations }
+		: undefined;
 }
 
-function nestEmbeddedRows(value: unknown, plan: EmbeddedRowsPlan): void {
+function nestEmbeddedRows(value: unknown, plan: EmbeddedRowsPlan): unknown {
 	if (Array.isArray(value)) {
-		for (const row of value) nestEmbeddedRows(row, plan);
-		return;
+		for (let i = 0; i < value.length; i++) value[i] = nestEmbeddedRows(value[i], plan);
+		return value;
 	}
-	if (typeof value !== 'object' || value === null) return;
+	if (typeof value !== 'object' || value === null) return value;
 
-	const row = value as Record<string, unknown>;
+	let row = value as Record<string, unknown>;
 	for (const [key, path] of plan.columns) {
 		let target = row;
 		for (const segment of path.slice(0, -1)) {
@@ -315,9 +670,11 @@ function nestEmbeddedRows(value: unknown, plan: EmbeddedRowsPlan): void {
 		target[path.at(-1)!] = row[key];
 		delete row[key];
 	}
+	if (plan.unions) row = foldEmbeddedUnions(row, plan.unions);
 	for (const [key, relationPlan] of plan.relations) {
-		nestEmbeddedRows(row[key], relationPlan);
+		if (key in row) row[key] = nestEmbeddedRows(row[key], relationPlan);
 	}
+	return row;
 }
 
 /**
@@ -339,8 +696,7 @@ export function nestEmbeddedRelationalRows<TMapper extends RelationalRowsMapper 
 
 	return ((rows: Parameters<RelationalRowsMapper>[0]) => {
 		const result = mapper ? mapper(rows) : rows;
-		nestEmbeddedRows(result, plan);
-		return result;
+		return nestEmbeddedRows(result, plan);
 	}) as TMapper;
 }
 
@@ -727,11 +1083,146 @@ export type FlattenEmbedBuilders<TColumns, TPrefix extends string = ''> = Simpli
 	UnionToIntersection<
 		{
 			[K in keyof TColumns & string]: TColumns[K] extends EmbedBuilder<infer TInner>
-				? FlattenEmbedBuilders<TInner, `${TPrefix}${K}.`>
+				// A group without columns, such as a union variant that carries nothing, adds no keys.
+				? [keyof TInner] extends [never] ? {}
+				: FlattenEmbedBuilders<TInner, `${TPrefix}${K}.`>
 				: { [P in `${TPrefix}${K}`]: TColumns[K] };
 		}[keyof TColumns & string]
 	>
 >;
+
+type ParentPath<TKey extends string, TAcc extends string = ''> = TKey extends `${infer Head}.${infer Rest}`
+	? ParentPath<Rest, TAcc extends '' ? Head : `${TAcc}.${Head}`>
+	: TAcc;
+
+type LastSegment<TKey extends string> = TKey extends `${string}.${infer Rest}` ? LastSegment<Rest> : TKey;
+
+/** The dotted keys of the `taggedUnion()` tag columns in a flat map: `'uploader.kind'`. */
+type UnionTagKeys<TColumns> = {
+	[K in keyof TColumns & string]: TColumns[K] extends { _: { unionTag: LastSegment<K> } } ? K : never;
+}[keyof TColumns & string];
+
+/** The tag columns of the unions that are not inside another union's variant. */
+type OuterUnionTagKeys<TColumns, TTag extends string = UnionTagKeys<TColumns>> = TTag extends string
+	? ParentPath<TTag> extends `${ParentPath<Exclude<UnionTagKeys<TColumns>, TTag>>}.${string}` ? never
+	: TTag
+	: never;
+
+/** One variant's columns of the union at `TPath`, keyed relative to the variant. */
+type UnionVariantColumnsOf<TColumns, TPrefix extends string> = {
+	[K in keyof TColumns as K extends `${TPrefix}${infer Rest}` ? Rest : never]: TColumns[K];
+};
+
+type ModelOf<
+	TColumns extends Columns,
+	TInferMode extends 'select' | 'insert',
+	TConfig extends { override?: boolean },
+	TExtra,
+> = [TExtra] extends [never] ? InferModelFromColumns<TColumns, TInferMode, TConfig>
+	: {
+		[K in keyof InferModelFromColumns<TColumns, TInferMode, TConfig>]:
+			| InferModelFromColumns<TColumns, TInferMode, TConfig>[K]
+			| TExtra;
+	};
+
+type UnionModel<
+	TColumns,
+	TPath extends string,
+	TKey extends string,
+	TTags,
+	TInferMode extends 'select' | 'insert',
+	TConfig extends { override?: boolean },
+	TExtra,
+> = TTags extends string ? Simplify<
+		& { [P in TKey]: TTags }
+		& NestModel<
+			Assume<UnionVariantColumnsOf<TColumns, `${TPath}.${TTags}.`>, Columns>,
+			TInferMode,
+			TConfig,
+			TExtra
+		>
+	>
+	: never;
+
+type ModelWithUnions<
+	TColumns extends Columns,
+	TInferMode extends 'select' | 'insert',
+	TConfig extends { override?: boolean },
+	TExtra,
+	TTagKeys extends string = OuterUnionTagKeys<TColumns>,
+> =
+	& ModelOf<
+		Assume<Omit<TColumns, Extract<keyof TColumns, `${ParentPath<TTagKeys>}.${string}`>>, Columns>,
+		TInferMode,
+		TConfig,
+		TExtra
+	>
+	& {
+		[K in TTagKeys as ParentPath<K>]: UnionModel<
+			TColumns,
+			ParentPath<K>,
+			LastSegment<K>,
+			TColumns[K]['_']['data'],
+			TInferMode,
+			TConfig,
+			TExtra
+		>;
+	};
+
+/**
+ * A table's row or insert value from its flat column map: `embed()` groups nested, and each
+ * `taggedUnion()` a union of its variants, `{ kind: 'staff'; staffId: number } | { kind: 'system' }`.
+ *
+ * @param TExtra added to the type of every column's value, as an insert also takes `SQL`
+ */
+export type NestModel<
+	TColumns extends Columns,
+	TInferMode extends 'select' | 'insert' = 'select',
+	TConfig extends { override?: boolean } = { override: false },
+	TExtra = never,
+> = [UnionTagKeys<TColumns>] extends [never] ? NestEmbedded<ModelOf<TColumns, TInferMode, TConfig, TExtra>>
+	: NestEmbedded<Simplify<ModelWithUnions<TColumns, TInferMode, TConfig, TExtra>>>;
+
+type UnionPartial<TColumns, TPath extends string, TKey extends string, TTags, TExtra> = TTags extends string ? Simplify<
+		& { [P in TKey]: TTags }
+		& NestModelPartial<Assume<UnionVariantColumnsOf<TColumns, `${TPath}.${TTags}.`>, Columns>, TExtra>
+	>
+	: never;
+
+/**
+ * An update's `set` from a flat column map: every column optional and nested as in
+ * {@link NestEmbeddedPartial}. A `taggedUnion()` is given as one whole variant: its tag, and any of that
+ * variant's columns.
+ */
+export type NestModelPartial<TColumns extends Columns, TExtra> = [UnionTagKeys<TColumns>] extends [never]
+	? NestEmbeddedPartial<{ [K in keyof TColumns & string]?: GetColumnData<TColumns[K]> | TExtra }>
+	: OuterUnionTagKeys<TColumns> extends infer TTagKeys extends string ? NestEmbeddedPartial<
+			& {
+				[K in Exclude<keyof TColumns & string, `${ParentPath<TTagKeys>}.${string}`>]?:
+					| GetColumnData<TColumns[K]>
+					| TExtra;
+			}
+			& {
+				[K in TTagKeys as ParentPath<K>]?: UnionPartial<
+					TColumns,
+					ParentPath<K>,
+					LastSegment<K>,
+					TColumns[K]['_']['data'],
+					TExtra
+				>;
+			}
+		>
+	: never;
+
+/** Whether a flat column map holds any `taggedUnion()`. */
+export type HasEmbeddedUnions<TColumns> = [UnionTagKeys<TColumns>] extends [never] ? false : true;
+
+/**
+ * The key of the tag column when `T` is a `taggedUnion()` group of columns, such as `files.uploader`.
+ */
+export type EmbeddedUnionTagKey<T> = {
+	[K in keyof T & string]: T[K] extends { _: { unionTag: K } } ? K : never;
+}[keyof T & string];
 
 type UnionToIntersection<U> = (U extends any ? (arg: U) => void : never) extends (arg: infer I) => void ? I
 	: never;
