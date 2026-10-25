@@ -62,8 +62,19 @@ Expect<Equal<InferInsertModel<typeof files>, typeof files.$inferInsert>>();
 }
 
 {
-	const rows = await db.select({ uploader: files.uploader, staff: files.uploader.staff }).from(files);
-	Expect<Equal<typeof rows, { uploader: Uploader; staff: { staffId: number; note: string | null } }[]>>();
+	const rows = await db.select({
+		uploader: files.uploader,
+		staff: files.uploader.staff,
+		staffId: files.uploader.staff.staffId,
+	}).from(files);
+	// Outside the whole union a variant's columns read as the database stores them: null in other variants' rows.
+	Expect<
+		Equal<typeof rows, {
+			uploader: Uploader;
+			staff: { staffId: number | null; note: string | null };
+			staffId: number | null;
+		}[]>
+	>();
 }
 
 {
@@ -110,4 +121,51 @@ Expect<Equal<InferInsertModel<typeof files>, typeof files.$inferInsert>>();
 
 	const picked = await rqb.query.files.findFirst({ columns: { uploader: true } });
 	Expect<Equal<typeof picked, { uploader: Uploader } | undefined>>();
+}
+
+{
+	const owners = pgTable('owners_tagged_union', {
+		id: serial().primaryKey(),
+		owner: taggedUnion('kind', text(), {
+			classroom: { campusId: integer().notNull(), classroomId: integer().notNull() },
+			campus: { campusId: integer().notNull() },
+			staff: { campusId: integer(), staffId: integer().notNull() },
+			nobody: {},
+		}),
+		region: taggedUnion('kind', text(), {
+			north: { code: text().notNull() },
+			south: { code: text().notNull() },
+		}),
+	});
+
+	type Owner =
+		| { kind: 'classroom'; campusId: number; classroomId: number }
+		| { kind: 'campus'; campusId: number }
+		| { kind: 'staff'; campusId: number | null; staffId: number }
+		| { kind: 'nobody' };
+	type Region = { kind: 'north'; code: string } | { kind: 'south'; code: string };
+
+	// A shared column is reached on the union, and is NOT NULL only when every variant declares it so.
+	Expect<Equal<typeof owners.owner.campusId['_']['notNull'], false>>();
+	Expect<Equal<typeof owners.region.code['_']['notNull'], true>>();
+	// @ts-expect-error - a shared column is not a column of a variant
+	owners.owner.campus.campusId;
+
+	Expect<Equal<typeof owners.$inferSelect, { id: number; owner: Owner; region: Region }>>();
+	Expect<
+		Equal<
+			typeof owners.$inferInsert['owner'],
+			| { kind: 'classroom'; campusId: number; classroomId: number }
+			| { kind: 'campus'; campusId: number }
+			| { kind: 'staff'; staffId: number; campusId?: number | null | undefined }
+			| { kind: 'nobody' }
+		>
+	>();
+
+	const rows = await db.select({ owner: owners.owner, campusId: owners.owner.campusId }).from(owners);
+	Expect<Equal<typeof rows, { owner: Owner; campusId: number | null }[]>>();
+
+	db.update(owners).set({ owner: { kind: 'campus', campusId: 1 } });
+	// @ts-expect-error - the nobody variant does not have a campusId
+	db.insert(owners).values({ owner: { kind: 'nobody', campusId: 1 }, region: { kind: 'north', code: 'n' } });
 }

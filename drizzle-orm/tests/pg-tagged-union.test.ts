@@ -26,13 +26,26 @@ const files = pgTable('files', {
 	}),
 });
 
+const owners = pgTable('owners', {
+	id: serial().primaryKey(),
+	owner: taggedUnion('kind', text(), {
+		classroom: { campusId: integer().notNull(), classroomId: integer().notNull() },
+		campus: { campusId: integer().notNull() },
+		nobody: {},
+	}),
+	region: taggedUnion('kind', text(), {
+		north: { code: text().notNull() },
+		south: { code: text().notNull() },
+	}),
+});
+
 const notes = pgTable('file_notes', {
 	id: serial().primaryKey(),
 	fileId: integer('file_id').notNull(),
 	body: text().notNull(),
 });
 
-const relations = defineRelations({ files, notes }, (r) => ({
+const relations = defineRelations({ files, notes, owners }, (r) => ({
 	files: { notes: r.many.notes({ from: r.files.id, to: r.notes.fileId }) },
 	notes: { file: r.one.files({ from: r.notes.fileId, to: r.files.id }) },
 }));
@@ -56,6 +69,16 @@ beforeAll(async () => {
 			"meta_owner_teamId" integer
 		)
 	`);
+	await db.execute(sql`
+		create table owners (
+			id serial primary key,
+			owner_kind text not null,
+			"owner_campusId" integer,
+			"owner_classroomId" integer,
+			region_kind text not null,
+			region_code text not null
+		)
+	`);
 	await db.execute(sql`create table file_notes (id serial primary key, file_id integer not null, body text not null)`);
 });
 
@@ -65,7 +88,7 @@ describe.each([{ jit: false }, { jit: true }])('taggedUnion (jit: $jit)', ({ jit
 	const db = drizzle({ client, relations, jit });
 
 	beforeEach(async () => {
-		await db.execute(sql`truncate files, file_notes restart identity`);
+		await db.execute(sql`truncate files, file_notes, owners restart identity`);
 	});
 
 	test('flattens to one tag column and nullable variant columns', () => {
@@ -186,12 +209,12 @@ describe.each([{ jit: false }, { jit: true }])('taggedUnion (jit: $jit)', ({ jit
 		expect(await db.query.files.findMany({ where: { uploader: { kind: 'system' } } })).toEqual([]);
 	});
 
-	test('variants cannot give two columns the same name', () => {
+	test('columns of different keys cannot be given the same name', () => {
 		expect(() =>
 			pgTable('clash', {
-				owner: taggedUnion('kind', text(), { a: { id: integer() }, b: { id: integer() } }),
+				owner: taggedUnion('kind', text(), { a: { x: integer('ref') }, b: { y: integer('ref') } }),
 			})
-		).toThrowError('Columns "owner.a.id" and "owner.b.id" of a union are both named "owner_id"');
+		).toThrowError('Columns "owner.a.x" and "owner.b.y" of a union are both named "ref"');
 	});
 
 	test('a variant cannot be named after the tag key', () => {
@@ -199,4 +222,42 @@ describe.each([{ jit: false }, { jit: true }])('taggedUnion (jit: $jit)', ({ jit
 			'A union variant cannot be named "kind", the key of its tag column',
 		);
 	});
+
+	test('variants share a column declared under the same key', () => {
+		expect(getTableConfig(owners).columns.map((column) => [column.name, column.notNull])).toEqual([
+			['id', true],
+			['owner_kind', true],
+			['owner_campusId', false],
+			['owner_classroomId', false],
+			['region_kind', true],
+			['region_code', true],
+		]);
+		expect(owners.owner.campusId.name).toBe('owner_campusId');
+	});
+
+	test('a shared column is kept by the variants that declare it and cleared by the rest', async () => {
+		const north = { kind: 'north', code: 'n' } as const;
+		await db.insert(owners).values({ owner: { kind: 'classroom', campusId: 1, classroomId: 2 }, region: north });
+		await db.update(owners).set({ owner: { kind: 'campus', campusId: 3 } });
+		expect((await db.select().from(owners))[0]).toEqual({
+			id: 1,
+			owner: { kind: 'campus', campusId: 3 },
+			region: north,
+		});
+
+		await db.update(owners).set({ owner: { kind: 'nobody' } });
+		const [raw] = (await db.execute<Record<string, unknown>>(sql`select * from owners`)).rows;
+		expect(raw).toMatchObject({ owner_kind: 'nobody', owner_campusId: null, owner_classroomId: null });
+		expect(await db.select({ owner: owners.owner }).from(owners)).toEqual([{ owner: { kind: 'nobody' } }]);
+		expect(await db.query.owners.findFirst({ columns: { owner: true } })).toEqual({ owner: { kind: 'nobody' } });
+	});
+});
+
+test('shared columns must agree on type and name', () => {
+	expect(() => taggedUnion('kind', text(), { a: { ref: integer() }, b: { ref: text() } })).toThrowError(
+		'Column "ref" is shared by variants "a" and "b", so it must be of the same type in both',
+	);
+	expect(() => taggedUnion('kind', text(), { a: { ref: integer('x') }, b: { ref: integer('y') } })).toThrowError(
+		'Column "ref" is shared by variants "a" and "b", so it must have the same name in both',
+	);
 });
