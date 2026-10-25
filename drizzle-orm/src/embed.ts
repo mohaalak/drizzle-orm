@@ -344,11 +344,6 @@ export interface EmbeddedUnionInfo {
 export interface EmbeddedUnionMembership {
 	readonly union: EmbeddedUnionInfo;
 	readonly path: readonly string[];
-	/**
-	 * Whether the column was declared `NOT NULL`. At runtime a variant's columns are all nullable, since other
-	 * variants' rows leave them empty, so this is what says the column must be filled in a row of its own variant.
-	 */
-	readonly notNull: boolean;
 }
 
 /**
@@ -424,13 +419,9 @@ export function flattenEmbedBuilders<TBuilder extends ColumnBuilderBase>(
 
 function markUnionMember(builder: ColumnBuilderBase, path: string, unions: readonly ActiveUnion[], inVariant: boolean) {
 	const config = (builder as unknown as { config: Record<string, any> }).config;
-	// read before it is forced to false below, and kept if the builder has been flattened before
-	const declaredNotNull: boolean = (config['embeddedUnions'] as EmbeddedUnionMembership[] | undefined)?.[0]?.notNull
-		?? config['notNull'] === true;
 	config['embeddedUnions'] = unions.map((union): EmbeddedUnionMembership => ({
 		union: union.info,
 		path: path.slice(union.root.length).split(EmbeddedKeySeparator),
-		notNull: declaredNotNull,
 	}));
 
 	const innermost = unions.at(-1)!;
@@ -440,8 +431,8 @@ function markUnionMember(builder: ColumnBuilderBase, path: string, unions: reado
 		if (config['primaryKey']) {
 			throw new Error(`Column "${path}" is in a union variant, so it cannot be a primary key`);
 		}
-		// Its own variant's rows keep the nullability it was declared with.
-		config['unionMember'] = { notNull: isTag || config['notNull'] === true };
+		// Its own variant's rows keep the nullability it was declared with, from the first time it was flattened.
+		config['unionMember'] ??= { notNull: isTag || config['notNull'] === true };
 		config['notNull'] = false;
 		return;
 	}
@@ -1270,8 +1261,11 @@ type ParentPath<TKey extends string, TAcc extends string = ''> = TKey extends `$
 
 type LastSegment<TKey extends string> = TKey extends `${string}.${infer Rest}` ? LastSegment<Rest> : TKey;
 
-/** The dotted keys of the `taggedUnion()` tag columns in a flat map: `'uploader.kind'`. */
-type UnionTagKeys<TColumns> = {
+/**
+ * The dotted keys of the `taggedUnion()` tag columns in a flat map: `'uploader.kind'`. A generic
+ * table's map, keyed by `string`, has none.
+ */
+type UnionTagKeys<TColumns> = string extends keyof TColumns ? never : {
 	[K in keyof TColumns & string]: TColumns[K] extends { _: { unionTag: LastSegment<K> } } ? K : never;
 }[keyof TColumns & string];
 
@@ -1378,7 +1372,8 @@ type UnionSharedNotNull<TColumns, TTag extends string> = {
 };
 
 /** Keys of the columns that belong to a union: its tag, shared and variant columns. */
-type UnionMemberKeys<TColumns> = {
+// A column map of a generic table, keyed by `string`, holds no union.
+type UnionMemberKeys<TColumns> = string extends keyof TColumns ? never : {
 	[K in keyof TColumns & string]: TColumns[K] extends
 		{ _: { unionTag: string } | { unionMember: unknown } | { unionShared: unknown } } ? K
 		: never;

@@ -132,7 +132,6 @@ export const nestEmbeddedRow = <T extends { [key: string]: unknown }>(row: T, un
 type UnionMembership = {
 	union: { key: string; tags: readonly string[]; shared: Readonly<Record<string, readonly string[]>> };
 	path: readonly string[];
-	notNull: boolean;
 };
 
 /**
@@ -149,7 +148,10 @@ export const getTableUnions = (table: object): TableUnions | undefined => {
 	const result: TableUnions = { tags: {}, columns: {} };
 
 	for (const [key, column] of Object.entries(getFlatColumns(table))) {
-		const memberships = (column as { config?: { embeddedUnions?: UnionMembership[] } }).config?.embeddedUnions;
+		const config = (column as {
+			config?: { embeddedUnions?: UnionMembership[]; unionMember?: { notNull: boolean }; notNull?: boolean };
+		}).config;
+		const memberships = config?.embeddedUnions;
 		if (memberships === undefined || memberships.length === 0) continue;
 
 		const levels: TableUnions['columns'][string]['levels'] = [];
@@ -165,7 +167,9 @@ export const getTableUnions = (table: object): TableUnions | undefined => {
 			levels.push({ tag, variants: sharedBy === undefined ? [path[0]!] : [...sharedBy] });
 			if (sharedBy === undefined) variantSegments.push(root === '' ? 0 : root.split(embeddedKeySeparator).length - 1);
 		}
-		result.columns[key] = { declaredNotNull: memberships[0]!.notNull, levels, variantSegments };
+		// A variant's column keeps its declared nullability in `unionMember`; any other column is as stored.
+		const declaredNotNull = config?.unionMember?.notNull ?? config?.notNull === true;
+		result.columns[key] = { declaredNotNull, levels, variantSegments };
 	}
 
 	const unions = Object.keys(result.columns).length === 0 ? undefined : result;
