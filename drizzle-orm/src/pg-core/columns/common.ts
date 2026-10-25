@@ -107,9 +107,9 @@ type ResolveData<T extends PgColumnBuilderConfig> = T['dimensions'] extends 1 | 
 	: GetBaseData<T>;
 
 export type ResolvePgColumnConfig<
-	out T extends PgColumnBuilderConfig,
-	out TTableName extends string,
-	out TData = ResolveData<T>,
+	T extends PgColumnBuilderConfig,
+	TTableName extends string,
+	TData = ResolveData<T>,
 > = {
 	name: string;
 	tableName: TTableName;
@@ -125,7 +125,7 @@ export type ResolvePgColumnConfig<
 	enumValues: T extends { enumValues: infer E extends string[] } ? E : undefined;
 	identity: T['identity'] extends 'always' | 'byDefault' ? T['identity'] : undefined;
 	generated: T['generated'] extends true ? true : undefined;
-} & {};
+} & (T extends { unionTag: infer TKey extends string } ? { unionTag: TKey } : {});
 
 export interface AnyPgColumnBuilder {
 	readonly _: PgColumnBuilderConfig;

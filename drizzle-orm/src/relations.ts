@@ -12,15 +12,17 @@ import { View, type ViewConfig } from '~/view.ts';
 import { aliasedTable } from './alias.ts';
 import type { QueryMetadata, WithCacheConfig } from './cache/core/types.ts';
 import type { CodecsCollection, NormalizeArrayCodec, NormalizeCodec } from './codecs.ts';
-import type { AnyColumn, Column } from './column.ts';
+import type { AnyColumn, Column, Columns } from './column.ts';
 import {
 	type EmbeddedGroupKeys,
 	type EmbeddedGroupOf,
 	EmbeddedKeySeparator,
 	type FlattenEmbeddedColumnsConfig,
 	flattenEmbeddedColumnsConfig,
+	type HasEmbeddedUnions,
 	isEmbeddedGroupKey,
 	type NestEmbedded,
+	type NestModel,
 	prefixEmbeddedGroupFilter,
 } from './embed.ts';
 import { entityKind, is } from './entity.ts';
@@ -897,6 +899,19 @@ export type InferRelationalQueryColumnsResult<
 > = TEntry extends Table<any>
 	? [EmbeddedGroupKeys<TEntry['_']['columns']>] extends [never]
 		? InferRelationalQueryTableResult<TModel, TColumnsConfig>
+	: HasEmbeddedUnions<TEntry['_']['columns']> extends true ? NestModel<
+			Assume<
+				Pick<
+					TEntry['_']['columns'],
+					keyof InferRelationalQueryTableResult<
+						InferModelFromColumns<TEntry['_']['columns'], 'select'>,
+						FlattenEmbeddedColumnsConfig<TEntry['_']['columns'], TColumnsConfig>
+					>
+				>,
+				Columns
+			>,
+			'select'
+		>
 	: NestEmbedded<
 		InferRelationalQueryTableResult<
 			InferModelFromColumns<TEntry['_']['columns'], 'select'>,

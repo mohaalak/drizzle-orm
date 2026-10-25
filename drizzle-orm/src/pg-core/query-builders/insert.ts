@@ -3,9 +3,11 @@ import {
 	flattenEmbeddedValues,
 	flattenSelectedFields,
 	getTableShape,
+	type HasEmbeddedUnions,
 	type InsertSelectionShape,
 	type ListedInsertColumns,
 	type NestEmbedded,
+	type NestModel,
 	type ValidateNestedInsertSelection,
 } from '~/embed.ts';
 import { entityKind, is } from '~/entity.ts';
@@ -48,14 +50,21 @@ export type PgInsertValue<
 	TColumnsList extends string[] | 'all' = 'all',
 	TModel extends Record<string, any> = InferModelFromColumns<TTable['_']['columns'], 'insert', { override: OverrideT }>,
 > =
-	& NestEmbedded<
-		{
-			[K in keyof TModel as TColumnsList extends 'all' ? K : Extract<K, TColumnsList[number]>]:
-				| TModel[K]
-				| SQL
-				| Placeholder;
-		}
-	>
+	& (HasEmbeddedUnions<TTable['_']['columns']> extends true ? NestModel<
+			TColumnsList extends 'all' ? TTable['_']['columns']
+				: Pick<TTable['_']['columns'], Extract<keyof TTable['_']['columns'], TColumnsList[number]>>,
+			'insert',
+			{ override: OverrideT },
+			SQL | Placeholder
+		>
+		: NestEmbedded<
+			{
+				[K in keyof TModel as TColumnsList extends 'all' ? K : Extract<K, TColumnsList[number]>]:
+					| TModel[K]
+					| SQL
+					| Placeholder;
+			}
+		>)
 	& {};
 
 export type PgInsertSelection<

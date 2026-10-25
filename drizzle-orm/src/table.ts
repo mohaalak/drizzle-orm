@@ -1,6 +1,6 @@
 import type { View } from '~/view.ts';
 import type { Column, Columns, GetColumnData } from './column.ts';
-import type { NestEmbedded } from './embed.ts';
+import type { NestModel } from './embed.ts';
 import { entityKind, is } from './entity.ts';
 import type { OptionalKeyOnly, RequiredKeyOnly } from './operations.ts';
 import type { SQLChunk } from './sql/sql.ts';
@@ -247,16 +247,16 @@ export type InferModel<
 	TInferMode extends 'select' | 'insert' = 'select',
 > = InferModelFromColumns<TTable['_']['columns'], TInferMode>;
 
-/** A table's row, with `embed()` groups nested. */
+/** A table's row, with `embed()` groups nested and each `taggedUnion()` a union of its variants. */
 export type InferSelectModel<
 	TTable extends Table,
-> = NestEmbedded<InferModelFromColumns<TTable['_']['columns'], 'select'>>;
+> = NestModel<TTable['_']['columns'], 'select'>;
 
-/** What a table takes on insert, with `embed()` groups nested. */
+/** What a table takes on insert, with `embed()` groups nested and each `taggedUnion()` a union of its variants. */
 export type InferInsertModel<
 	TTable extends Table,
 	TOverride extends { override?: boolean } = { override: false },
-> = NestEmbedded<InferInsertColumns<TTable, TOverride>>;
+> = NestModel<TTable['_']['columns'], 'insert', TOverride>;
 
 /**
  * {@link InferInsertModel} keyed by column: the columns of an `embed()` group stay under their dotted keys
@@ -271,8 +271,8 @@ export type InferEnum<T> = T extends { enumValues: readonly (infer U)[] } ? U
 	: never;
 
 export interface InferTableColumnsModels<TColumns extends Columns> {
-	readonly $inferSelect: NestEmbedded<InferModelFromColumns<TColumns, 'select'>>;
-	readonly $inferInsert: NestEmbedded<InferModelFromColumns<TColumns, 'insert', { override: false }>>;
+	readonly $inferSelect: NestModel<TColumns, 'select'>;
+	readonly $inferInsert: NestModel<TColumns, 'insert', { override: false }>;
 }
 
 export type RequiredInsertKeys<TTable extends Table, TColumns extends Record<string, Column> = TTable['_']['columns']> =
