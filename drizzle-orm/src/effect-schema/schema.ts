@@ -1,6 +1,7 @@
 import { Result, Schema as s } from 'effect';
 import type { Top as SchemaTop } from 'effect/Schema';
 import { Column } from '~/column.ts';
+import { unionVariantShapes } from '~/embed-validators.ts';
 import { EmbeddedColumns, getTableShape } from '~/embed.ts';
 import { is } from '~/entity.ts';
 import type { PgEnum } from '~/pg-core/columns/enum.ts';
@@ -38,6 +39,12 @@ function handleColumns(
 ): SchemaTop {
 	const columnSchemas: Record<string, SchemaTop | s.optional<SchemaTop>> = {};
 	for (const [key, selected] of Object.entries(columns)) {
+		const union = is(selected, EmbeddedColumns) ? unionVariantShapes(selected) : undefined;
+		if (union) {
+			columnSchemas[key] = handleUnion(union, refinements[key] ?? {}, conditions);
+			continue;
+		}
+
 		if (!is(selected, Column) && !is(selected, SQL) && !is(selected, SQL.Aliased) && typeof selected === 'object') {
 			const columns = isTable(selected) ? getTableShape(selected) : isView(selected) ? getColumns(selected) : selected;
 			const nested = handleColumns(columns, refinements[key] ?? {}, conditions);
@@ -77,6 +84,27 @@ function handleColumns(
 	return s.Struct(columnSchemas);
 }
 
+/**
+ * A `taggedUnion()` group is a union of one struct per variant, told apart by the tag's literal. Refinements
+ * of the group name a shared column's key, which refines it in every variant that declares it, or a variant's
+ * name, which holds refinements of that variant's columns. The tag column is not refined.
+ */
+function handleUnion(
+	{ key, variants }: NonNullable<ReturnType<typeof unionVariantShapes>>,
+	refinements: Record<string, any>,
+	conditions: Conditions,
+): SchemaTop {
+	const tags = variants.map(({ tag }) => tag);
+	const shared = Object.fromEntries(Object.entries(refinements).filter(([field]) => !tags.includes(field)));
+	const schemas = variants.map(({ tag, shape }) => {
+		const { fields } = handleColumns(shape, { ...shared, ...refinements[tag] }, conditions) as s.Struct<
+			s.Struct.Fields
+		>;
+		return s.Struct({ [key]: s.Literal(tag), ...fields });
+	});
+	return conditions.union(s.Union(schemas));
+}
+
 function handleEnum(
 	enum_: PgEnum<[string, ...string[]]>,
 ) {
@@ -88,6 +116,7 @@ const selectConditions: Conditions = {
 	optional: () => false,
 	nullable: (column) => !column.notNull,
 	group: (schema) => schema,
+	union: (schema) => schema,
 };
 
 const insertConditions: Conditions = {
@@ -103,6 +132,8 @@ const insertConditions: Conditions = {
 			? s.optional(s.UndefinedOr(schema))
 			: schema;
 	},
+	// The tag is always written
+	union: (schema) => schema,
 };
 
 const updateConditions: Conditions = {
@@ -113,6 +144,8 @@ const updateConditions: Conditions = {
 	nullable: (column) => !column.notNull,
 	// Writing `null` to a group clears every column in it
 	group: (schema) => s.optional(s.UndefinedOr(s.NullOr(schema))),
+	// A union is written whole as one variant, and cannot be cleared
+	union: (schema) => s.optional(s.UndefinedOr(schema)),
 };
 
 export const createSelectSchema: CreateSelectSchema = (
