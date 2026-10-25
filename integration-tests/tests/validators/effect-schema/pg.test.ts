@@ -273,6 +273,12 @@ test('tagged union - select', (t) => {
 	// a field of another variant in place of the variant's own
 	expect(isValid(result, row({ kind: 'staff', parentId: 1, note: null, campusId: 2 }))).toBe(false);
 	expect(isValid(result, row({ kind: 'parent', staffId: 1, campusId: null, via: parent.via }))).toBe(false);
+	// a field of another variant beside the variant's own is rejected when decoding rejects excess properties
+	expect(
+		Result.isSuccess(
+			s.decodeUnknownResult(result)(row({ kind: 'system', staffId: 1 }), { onExcessProperty: 'error' }),
+		),
+	).toBe(false);
 	// a declared-nullable column is nullable, a declared-NOT NULL one is not, though both are shared
 	expect(isValid(result, row({ ...staff, campusId: null }))).toBe(false);
 	expect(isValid(result, row({ ...parent, campusId: null }))).toBe(true);

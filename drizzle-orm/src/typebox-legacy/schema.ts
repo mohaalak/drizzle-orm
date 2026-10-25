@@ -86,7 +86,8 @@ function handleUnion(
 	const shared = Object.fromEntries(Object.entries(refinements).filter(([field]) => !tags.includes(field)));
 	const schemas = variants.map(({ tag, shape }) => {
 		const { properties } = handleColumns(shape, { ...shared, ...refinements[tag] }, conditions, factory) as TObject;
-		return t.Object({ [key]: t.Literal(tag), ...properties });
+		// A variant's object rejects keys it does not declare, such as another variant's columns.
+		return t.Object({ [key]: t.Literal(tag), ...properties }, { additionalProperties: false });
 	});
 	return conditions.union(t.Union(schemas));
 }
