@@ -1,5 +1,11 @@
 import type { GetColumnData } from '~/column.ts';
-import { getTableShape, type NestEmbedded, type NestEmbeddedPartial } from '~/embed.ts';
+import {
+	getTableShape,
+	type HasEmbeddedUnions,
+	type NestEmbedded,
+	type NestEmbeddedPartial,
+	type NestModelPartial,
+} from '~/embed.ts';
 import { entityKind, is } from '~/entity.ts';
 import type { JoinType, SelectResultFields } from '~/query-builders/select.types.ts';
 import { SelectionProxyHandler } from '~/selection-proxy.ts';
@@ -39,16 +45,20 @@ export type SQLiteUpdateSetSource<
 	TTable extends SQLiteTable,
 	TModel extends Record<string, any> = InferModelFromColumns<TTable['_']['columns'], 'insert'>,
 > =
-	& NestEmbeddedPartial<
-		{
-			[Key in keyof TModel & string]?:
-				| GetColumnData<TTable['_']['columns'][Key], 'query'>
-				| SQL
-				| SQLiteColumn
-				| Placeholder
-				| undefined;
-		}
-	>
+	& (HasEmbeddedUnions<TTable['_']['columns']> extends true ? NestModelPartial<
+			Pick<TTable['_']['columns'], keyof TModel & string>,
+			SQL | SQLiteColumn | Placeholder | undefined
+		>
+		: NestEmbeddedPartial<
+			{
+				[Key in keyof TModel & string]?:
+					| GetColumnData<TTable['_']['columns'][Key], 'query'>
+					| SQL
+					| SQLiteColumn
+					| Placeholder
+					| undefined;
+			}
+		>)
 	& {};
 
 export interface SQLiteUpdateBuilderConstructor {
