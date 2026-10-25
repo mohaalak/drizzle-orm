@@ -173,7 +173,8 @@ export type MakeColumnConfig<
 		: G extends undefined ? undefined
 		: G
 		: undefined;
-} & {};
+	// Markers a `taggedUnion()` column carries, as `ResolvePgColumnConfig` does for Postgres.
+} & UnionColumnMarkers<T>;
 
 export interface ColumnBuilderRuntimeConfig<TData> {
 	name: string;
