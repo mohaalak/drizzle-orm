@@ -8,7 +8,13 @@ import type {
 } from '~/cockroach-core/session.ts';
 import { CockroachTable } from '~/cockroach-core/table.ts';
 import type { GetColumnData } from '~/column.ts';
-import { getTableShape, type NestEmbedded, type NestEmbeddedPartial } from '~/embed.ts';
+import {
+	getTableShape,
+	type HasEmbeddedUnions,
+	type NestEmbedded,
+	type NestEmbeddedPartial,
+	type NestModelPartial,
+} from '~/embed.ts';
 import { entityKind, is } from '~/entity.ts';
 import type { TypedQueryBuilder } from '~/query-builders/query-builder.ts';
 import type {
@@ -60,16 +66,20 @@ export interface CockroachUpdateConfig {
 }
 
 export type CockroachUpdateSetSource<TTable extends CockroachTable> =
-	& NestEmbeddedPartial<
-		{
-			[Key in keyof InferInsertColumns<TTable>]?:
-				| GetColumnData<TTable['_']['columns'][Key]>
-				| SQL
-				| CockroachColumn
-				| Placeholder
-				| undefined;
-		}
-	>
+	& (HasEmbeddedUnions<TTable['_']['columns']> extends true ? NestModelPartial<
+			Pick<TTable['_']['columns'], keyof InferInsertColumns<TTable> & string>,
+			SQL | CockroachColumn | Placeholder | undefined
+		>
+		: NestEmbeddedPartial<
+			{
+				[Key in keyof InferInsertColumns<TTable>]?:
+					| GetColumnData<TTable['_']['columns'][Key]>
+					| SQL
+					| CockroachColumn
+					| Placeholder
+					| undefined;
+			}
+		>)
 	& {};
 
 export class CockroachUpdateBuilder<TTable extends CockroachTable, TQueryResult extends CockroachQueryResultHKT> {

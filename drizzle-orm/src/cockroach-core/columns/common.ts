@@ -3,7 +3,7 @@ import { ForeignKeyBuilder } from '~/cockroach-core/foreign-keys.ts';
 import type { AnyCockroachTable, CockroachTable } from '~/cockroach-core/table.ts';
 import type { ColumnType, GeneratedColumnConfig, GeneratedIdentityConfig } from '~/column-builder.ts';
 import { Column } from '~/column.ts';
-import type { EmbedBuilder, FlattenEmbedBuilders } from '~/embed.ts';
+import type { EmbedBuilder, FlattenEmbedBuilders, UnionColumnMarkers } from '~/embed.ts';
 import { entityKind, is } from '~/entity.ts';
 import type { SQL } from '~/sql/sql.ts';
 import { iife } from '~/tracing-utils.ts';
@@ -106,9 +106,9 @@ type ResolveData<T extends CockroachColumnBuilderConfig> = T['dimensions'] exten
 	: GetBaseData<T>;
 
 export type ResolveCockroachColumnConfig<
-	out T extends CockroachColumnBuilderConfig,
-	out TTableName extends string,
-	out TData = ResolveData<T>,
+	T extends CockroachColumnBuilderConfig,
+	TTableName extends string,
+	TData = ResolveData<T>,
 > = {
 	name: string;
 	tableName: TTableName;
@@ -124,7 +124,7 @@ export type ResolveCockroachColumnConfig<
 	enumValues: T extends { enumValues: infer E extends string[] } ? E : undefined;
 	identity: T['identity'] extends 'always' | 'byDefault' ? T['identity'] : undefined;
 	generated: T['generated'] extends true ? true : undefined;
-} & {};
+} & UnionColumnMarkers<T>;
 
 export interface AnyCockroachColumnBuilder {
 	readonly _: CockroachColumnBuilderConfig;
