@@ -1,6 +1,7 @@
 import { entityKind, is } from '~/entity.ts';
 import type { CockroachColumn, ExtraConfigColumn as CockroachExtraConfigColumn } from './cockroach-core/index.ts';
 import type { Column, ColumnBaseConfig } from './column.ts';
+import type { UnionColumnMarkers } from './embed.ts';
 import type { MsSqlColumn } from './mssql-core/index.ts';
 import type { MySqlColumn } from './mysql-core/index.ts';
 import type { ExtraConfigColumn, PgColumn, PgSequenceOptions } from './pg-core/index.ts';
@@ -408,7 +409,7 @@ export type BuildColumn<
 > =
 	// TDialect extends 'pg' ? PgColumn<TBuiltConfig, {}>
 	TDialect extends 'mysql' ? MySqlColumn<TBuiltConfig, {}>
-		: TDialect extends 'mssql' ? MsSqlColumn<TBuiltConfig, {}>
+		: TDialect extends 'mssql' ? MsSqlColumn<TBuiltConfig & UnionColumnMarkers<TBuilder['_']>, {}>
 		: TDialect extends 'sqlite' ? SQLiteColumn<TBuiltConfig, {}>
 		: TDialect extends 'singlestore' ? SingleStoreColumn<TBuiltConfig, {}>
 		// : TDialect extends 'cockroach' ? CockroachColumn<TBuiltConfig, {}>
@@ -465,7 +466,7 @@ export type ChangeColumnTableName<
 		: TDialect extends 'mysql' ? MySqlColumn<MakeColumnConfig<TColumn['_'], TAlias>>
 		: TDialect extends 'singlestore' ? SingleStoreColumn<MakeColumnConfig<TColumn['_'], TAlias>>
 		: TDialect extends 'sqlite' ? SQLiteColumn<MakeColumnConfig<TColumn['_'], TAlias>>
-		: TDialect extends 'mssql' ? MsSqlColumn<MakeColumnConfig<TColumn['_'], TAlias>>
+		: TDialect extends 'mssql' ? MsSqlColumn<MakeColumnConfig<TColumn['_'], TAlias> & UnionColumnMarkers<TColumn['_']>>
 		: TDialect extends 'cockroach' ? CockroachColumn<
 				TColumn['_']['dataType'],
 				Omit<TColumn['_'], 'tableName'> & { tableName: TAlias; insertType: unknown }
