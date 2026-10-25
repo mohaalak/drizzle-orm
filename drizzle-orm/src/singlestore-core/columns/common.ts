@@ -1,4 +1,6 @@
 import type {
+	BuildColumns,
+	ColumnBuilderBase,
 	ColumnBuilderBaseConfig,
 	ColumnBuilderExtraConfig,
 	ColumnBuilderRuntimeConfig,
@@ -10,13 +12,29 @@ import type {
 import { ColumnBuilder } from '~/column-builder.ts';
 import type { ColumnBaseConfig } from '~/column.ts';
 import { Column } from '~/column.ts';
+import type { EmbedBuilder, FlattenEmbedBuilders } from '~/embed.ts';
 import { entityKind } from '~/entity.ts';
 import type { SingleStoreTable } from '~/singlestore-core/table.ts';
 import type { SQL } from '~/sql/sql.ts';
-import type { Update } from '~/utils.ts';
+import type { Assume, Update } from '~/utils.ts';
 import type { SingleStoreType } from '../codecs.ts';
 
 export type SingleStoreColumns = Record<string, SingleStoreColumn<any>>;
+
+/** A table definition: column builders, optionally grouped with `embed()`. */
+export type SingleStoreTableColumnsMap = Record<string, ColumnBuilderBase | EmbedBuilder>;
+
+type HasEmbeds<TConfigMap> = [Extract<TConfigMap[keyof TConfigMap], EmbedBuilder>] extends [never] ? false : true;
+
+export type SingleStoreBuildColumns<
+	TTableName extends string,
+	TConfigMap extends SingleStoreTableColumnsMap,
+> = HasEmbeds<TConfigMap> extends true ? BuildColumns<
+		TTableName,
+		Assume<FlattenEmbedBuilders<TConfigMap>, Record<string, ColumnBuilderBase>>,
+		'singlestore'
+	>
+	: BuildColumns<TTableName, Assume<TConfigMap, Record<string, ColumnBuilderBase>>, 'singlestore'>;
 
 export interface SingleStoreGeneratedColumnConfig {
 	mode?: 'virtual' | 'stored';

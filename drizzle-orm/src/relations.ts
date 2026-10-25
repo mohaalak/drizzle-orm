@@ -1,9 +1,30 @@
-import { CacheKey, IsAlias, OriginalName, Qualifier, Table, TableColumns, TableSchema } from '~/table.ts';
+import {
+	CacheKey,
+	type InferModelFromColumns,
+	IsAlias,
+	OriginalName,
+	Qualifier,
+	Table,
+	TableColumns,
+	TableSchema,
+} from '~/table.ts';
 import { View, type ViewConfig } from '~/view.ts';
 import { aliasedTable } from './alias.ts';
 import type { QueryMetadata, WithCacheConfig } from './cache/core/types.ts';
 import type { CodecsCollection, NormalizeArrayCodec, NormalizeCodec } from './codecs.ts';
-import type { AnyColumn, Column } from './column.ts';
+import type { AnyColumn, Column, Columns } from './column.ts';
+import {
+	type EmbeddedGroupKeys,
+	type EmbeddedGroupOf,
+	EmbeddedKeySeparator,
+	type FlattenEmbeddedColumnsConfig,
+	flattenEmbeddedColumnsConfig,
+	type HasEmbeddedUnions,
+	isEmbeddedGroupKey,
+	type NestEmbedded,
+	type NestModel,
+	prefixEmbeddedGroupFilter,
+} from './embed.ts';
 import { entityKind, is } from './entity.ts';
 import { DrizzleError } from './errors.ts';
 import type { SelectResultFields } from './query-builders/select.types.ts';
@@ -124,6 +145,12 @@ export function processRelations(tablesConfig: TablesRelationalConfig, tables: S
 			if (Object.prototype.hasOwnProperty.call(tableConfig.table[TableColumns], relationFieldName)) {
 				throw new Error(
 					`${relationPrintName}: relation name collides with column "${relationFieldName}" of table "${tableConfig.name}"`,
+				);
+			}
+
+			if (isEmbeddedGroupKey(tableConfig.table[TableColumns], relationFieldName)) {
+				throw new Error(
+					`${relationPrintName}: relation name collides with embed() group "${relationFieldName}" of table "${tableConfig.name}"`,
 				);
 			}
 
@@ -557,9 +584,17 @@ export interface SQLOperator {
 	sql: Operators['sql'];
 }
 
-export type DBQueryConfigColumns<TColumns extends FieldSelection> = {
-	[K in keyof TColumns]?: boolean | undefined;
-};
+export type DBQueryConfigColumns<TColumns extends Record<string, unknown>> =
+	& {
+		[K in keyof TColumns]?: boolean | undefined;
+	}
+	// `embed()` groups: selected whole (`address: true`) or by their columns (`address: { city: true }`)
+	& {
+		[Head in EmbeddedGroupKeys<TColumns>]?:
+			| boolean
+			| DBQueryConfigColumns<EmbeddedGroupOf<TColumns, Head>>
+			| undefined;
+	};
 
 export type DBQueryConfigExtras<TTable extends SchemaEntry> = Record<
 	string,
@@ -575,9 +610,13 @@ export type DBQueryConfigOrderByCallback<TTable extends SchemaEntry> = (
 	operators: OrderByOperators,
 ) => ValueOrArray<AnyColumn | SQL> | undefined;
 
-export type DBQueryConfigOrderByObject<TColumns extends FieldSelection> = {
-	[K in keyof TColumns]?: 'asc' | 'desc' | undefined;
-};
+export type DBQueryConfigOrderByObject<TColumns extends Record<string, unknown>> =
+	& {
+		[K in keyof TColumns]?: 'asc' | 'desc' | undefined;
+	}
+	& {
+		[Head in EmbeddedGroupKeys<TColumns>]?: DBQueryConfigOrderByObject<EmbeddedGroupOf<TColumns, Head>> | undefined;
+	};
 
 export type DBQueryConfigOrderBy<TTable extends SchemaEntry, TColumns extends FieldSelection> =
 	| DBQueryConfigOrderByCallback<TTable>
@@ -597,11 +636,18 @@ export type RelationsCountOrderDirection = `${RelationsOrderDirection}(count)`;
 export type RelationsOrderColumns<
 	TColumns extends Record<string, unknown>,
 	TAggregated extends boolean = false,
-> = {
-	[K in keyof TColumns]?:
-		| (TAggregated extends true ? RelationsAggregatedOrderDirection : RelationsOrderDirection)
-		| undefined;
-};
+> =
+	& {
+		[K in keyof TColumns]?:
+			| (TAggregated extends true ? RelationsAggregatedOrderDirection : RelationsOrderDirection)
+			| undefined;
+	}
+	// `embed()` groups order by their columns: `address: { city: 'asc' }`
+	& {
+		[Head in EmbeddedGroupKeys<TColumns>]?:
+			| RelationsOrderColumns<EmbeddedGroupOf<TColumns, Head>, TAggregated>
+			| undefined;
+	};
 
 export type RelationsOrderRelations<
 	TTable extends TableRelationalConfig,
@@ -841,6 +887,39 @@ export type InferRelationalQueryTableResult<
 	]: TRawSelection[K];
 };
 
+/**
+ * The row a relational query's `columns` config selects. For a table with `embed()` groups, the config
+ * is flattened to the table's dotted keys and the picked row nested again, so that groups and their
+ * columns are picked the way the query builder picks them.
+ */
+export type InferRelationalQueryColumnsResult<
+	TEntry extends SchemaEntry,
+	TModel extends Record<string, unknown>,
+	TColumnsConfig extends Record<string, unknown>,
+> = TEntry extends Table<any>
+	? [EmbeddedGroupKeys<TEntry['_']['columns']>] extends [never]
+		? InferRelationalQueryTableResult<TModel, TColumnsConfig>
+	: HasEmbeddedUnions<TEntry['_']['columns']> extends true ? NestModel<
+			Assume<
+				Pick<
+					TEntry['_']['columns'],
+					keyof InferRelationalQueryTableResult<
+						InferModelFromColumns<TEntry['_']['columns'], 'select'>,
+						FlattenEmbeddedColumnsConfig<TEntry['_']['columns'], TColumnsConfig>
+					>
+				>,
+				Columns
+			>,
+			'select'
+		>
+	: NestEmbedded<
+		InferRelationalQueryTableResult<
+			InferModelFromColumns<TEntry['_']['columns'], 'select'>,
+			FlattenEmbeddedColumnsConfig<TEntry['_']['columns'], TColumnsConfig>
+		>
+	>
+	: InferRelationalQueryTableResult<TModel, TColumnsConfig>;
+
 export type InferSchemaEntrySelectModel<TEntry extends SchemaEntry> = TEntry extends Subquery<string, any>
 	? SelectResultFields<TEntry['_']['selectedFields']>
 	: Assume<
@@ -855,10 +934,9 @@ export type BuildQueryResult<
 	TModel extends Record<string, unknown> = InferSchemaEntrySelectModel<TTableConfig['table']>,
 > = TFullSelection extends true | Record<string, never> ? TModel
 	: TFullSelection extends Record<string, unknown> ? Simplify<
-			& (InferRelationalQueryTableResult<
-				TModel,
-				TFullSelection['columns'] extends Record<string, unknown> ? TFullSelection['columns'] : 'Full'
-			>)
+			& (TFullSelection['columns'] extends Record<string, unknown>
+				? InferRelationalQueryColumnsResult<TTableConfig['table'], TModel, TFullSelection['columns']>
+				: TModel)
 			& (TFullSelection['extras'] extends Record<string, SQLWrapper | ((...args: any[]) => SQLWrapper)> ? {
 					[
 						K in NonUndefinedKeysOnly<
@@ -1678,12 +1756,16 @@ export interface RelationsFilterCommons<
 
 export type RelationsFilterColumns<
 	TColumns extends Record<string, unknown>,
-> = {
-	[K in keyof TColumns]?:
-		| (TColumns[K] extends { _: { data: infer Data } } ? RelationsFieldFilter<Data>
-			: RelationsFieldFilter<unknown>)
-		| EmptyFilter;
-};
+> =
+	& {
+		[K in keyof TColumns]?:
+			| (TColumns[K] extends { _: { data: infer Data } } ? RelationsFieldFilter<Data>
+				: RelationsFieldFilter<unknown>)
+			| EmptyFilter;
+	}
+	& {
+		[Head in EmbeddedGroupKeys<TColumns>]?: EmbeddedGroupFilter<EmbeddedGroupOf<TColumns, Head>> | EmptyFilter;
+	};
 
 export type RelationsFilterRelations<
 	TTable extends TableRelationalConfig,
@@ -1724,12 +1806,25 @@ export interface TableFilterCommons<
 
 export type TableFilterColumns<
 	TColumns extends Record<string, unknown>,
-> = {
-	[K in keyof TColumns]?:
-		| (TColumns[K] extends { _: { data: infer Data } } ? RelationsFieldFilter<Data>
-			: RelationsFieldFilter<unknown>)
-		| EmptyFilter;
-};
+> =
+	& {
+		[K in keyof TColumns]?:
+			| (TColumns[K] extends { _: { data: infer Data } } ? RelationsFieldFilter<Data>
+				: RelationsFieldFilter<unknown>)
+			| EmptyFilter;
+	}
+	& {
+		[Head in EmbeddedGroupKeys<TColumns>]?: EmbeddedGroupFilter<EmbeddedGroupOf<TColumns, Head>> | EmptyFilter;
+	};
+
+/** The filter of an `embed()` group: its columns, nested groups, and `AND` / `OR` / `NOT` over them. */
+export type EmbeddedGroupFilter<TColumns extends Record<string, unknown>> =
+	& TableFilterColumns<TColumns>
+	& {
+		OR?: EmbeddedGroupFilter<TColumns>[] | undefined;
+		AND?: EmbeddedGroupFilter<TColumns>[] | undefined;
+		NOT?: EmbeddedGroupFilter<TColumns> | undefined;
+	};
 
 export type TableFilter<
 	TTable extends SchemaEntry = SchemaEntry,
@@ -2274,6 +2369,25 @@ export function relationsFilterToSQL(
 					continue;
 				}
 
+				// An `embed()` group's filter names its columns: `{ address: { city: 'Berlin' } }`
+				if (isEmbeddedGroupKey(table[TableColumns], target)) {
+					if (typeof value !== 'object' || value === null) {
+						throw new DrizzleError({
+							message: `Invalid filter for embed() group "${target}": expected an object of its fields, got "${value}"`,
+						});
+					}
+					conditions.open();
+					buildNested(
+						prefixEmbeddedGroupFilter(
+							value as Record<string, unknown>,
+							target + EmbeddedKeySeparator,
+						) as AnyRelationsFilter,
+					);
+					conditions.close();
+
+					continue;
+				}
+
 				const relation = Object.prototype.hasOwnProperty.call(tableRelations, target)
 					? tableRelations[target]
 					: undefined;
@@ -2453,6 +2567,31 @@ export function relationsOrderEntriesToSQL(
 			collectTo.push(
 				commonStringChunks[')'],
 				direction === 'asc' ? commonStringChunks[' asc'] : commonStringChunks[' desc'],
+			);
+
+			continue;
+		}
+
+		// An `embed()` group orders by its columns: `{ address: { city: 'asc' } }`
+		if (isEmbeddedGroupKey(table[TableColumns], target)) {
+			if (typeof value !== 'object') {
+				throw new DrizzleError({
+					message:
+						`Invalid order "${path}": expected an object with fields of the embed() group to order by, got "${value}"`,
+				});
+			}
+			const groupOrders: Record<string, unknown> = {};
+			for (const [key, order] of Object.entries(value)) groupOrders[target + EmbeddedKeySeparator + key] = order;
+			relationsOrderEntriesToSQL(
+				table,
+				groupOrders as AnyRelationsOrder,
+				tableRelations,
+				tablesRelations,
+				withSubqueries,
+				singleRowLimit,
+				source,
+				collectTo,
+				start,
 			);
 
 			continue;
@@ -2941,6 +3080,9 @@ export function buildRqbColumns(
 
 		return true;
 	}
+
+	// `embed()` groups may be selected whole or by their columns: `{ address: { city: true } }`
+	columnsConfig = flattenEmbeddedColumnsConfig(columns, columnsConfig);
 
 	let colSelectionMode: boolean | undefined;
 	for (const k of Object.keys(columnsConfig)) {

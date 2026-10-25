@@ -1,3 +1,10 @@
+import {
+	expandInsertColumnList,
+	flattenEmbeddedValues,
+	type HasEmbeddedUnions,
+	type NestEmbedded,
+	type NestModel,
+} from '~/embed.ts';
 import { entityKind, is } from '~/entity.ts';
 import { QueryPromise } from '~/query-promise.ts';
 import type { RunnableQuery } from '~/runnable-query.ts';
@@ -14,11 +21,11 @@ import type {
 import type { SingleStoreTable } from '~/singlestore-core/table.ts';
 import type { Placeholder, Query, SQL, SQLWrapper } from '~/sql/sql.ts';
 import { sql } from '~/sql/sql.ts';
-import type { InferInsertModel, InferModelFromColumns } from '~/table.ts';
+import type { InferInsertColumns, InferModelFromColumns } from '~/table.ts';
 import { Table } from '~/table.ts';
 import { usedTablesOf } from '~/used-tables.ts';
-import { type DrizzleTypeError, mapUpdateSet, orderSelectedFields } from '~/utils.ts';
-import type { AnySingleStoreColumn, SingleStoreColumn } from '../columns/common.ts';
+import { type DrizzleTypeError, mapUpdateSet } from '~/utils.ts';
+import type { AnySingleStoreColumn } from '../columns/common.ts';
 import type { SelectedFieldsOrdered } from './select.types.ts';
 import type { SingleStoreUpdateSetSource } from './update.ts';
 
@@ -36,14 +43,23 @@ export type AnySingleStoreInsertConfig = SingleStoreInsertConfig<SingleStoreTabl
 export type SingleStoreInsertValue<
 	TTable extends SingleStoreTable,
 	TColumnsList extends string[] | 'all' = 'all',
-	TModel extends Record<string, any> = InferInsertModel<TTable>,
+	TModel extends Record<string, any> = InferInsertColumns<TTable>,
 > =
-	& {
-		[K in keyof TModel as TColumnsList extends 'all' ? K : Extract<K, TColumnsList[number]>]:
-			| TModel[K]
-			| SQL
-			| Placeholder;
-	}
+	& (HasEmbeddedUnions<TTable['_']['columns']> extends true ? NestModel<
+			TColumnsList extends 'all' ? TTable['_']['columns']
+				: Pick<TTable['_']['columns'], Extract<keyof TTable['_']['columns'], TColumnsList[number]>>,
+			'insert',
+			{ override: false },
+			SQL | Placeholder
+		>
+		: NestEmbedded<
+			{
+				[K in keyof TModel as TColumnsList extends 'all' ? K : Extract<K, TColumnsList[number]>]:
+					| TModel[K]
+					| SQL
+					| Placeholder;
+			}
+		>)
 	& {};
 
 export type NoDuplicateColumns<
@@ -74,7 +90,9 @@ export class SingleStoreInsertBuilder<
 		private session: SingleStoreSession,
 		private dialect: SingleStoreDialect,
 		private columnList?: string[],
-	) {}
+	) {
+		if (columnList) this.columnList = expandInsertColumnList(table, columnList);
+	}
 
 	ignore(): this {
 		this.shouldIgnore = true;
@@ -94,6 +112,7 @@ export class SingleStoreInsertBuilder<
 		if (values.length === 0) {
 			throw new Error('values() must be called with at least one value');
 		}
+		values = values.map((value) => flattenEmbeddedValues(this.table, value)) as typeof values;
 		return new SingleStoreInsertBase(
 			this.table,
 			values,
@@ -159,7 +178,7 @@ export type SingleStoreInsertReturning<
 	T['_']['table'],
 	T['_']['queryResult'],
 	T['_']['preparedQueryHKT'],
-	InferModelFromColumns<GetPrimarySerialOrDefaultKeys<T['_']['table']['_']['columns']>>,
+	NestEmbedded<InferModelFromColumns<GetPrimarySerialOrDefaultKeys<T['_']['table']['_']['columns']>>>,
 	TDynamic,
 	T['_']['excludedMethods'] | '$returning'
 >;
@@ -287,11 +306,9 @@ export class SingleStoreInsertBase<
 				returning.push({ field: value, fieldType: 'Column', path: [key] });
 			}
 		}
-		this.config.returning = orderSelectedFields<SingleStoreColumn>(
-			this.config.table[Table.Symbol.Columns],
-			undefined,
-			this.dialect.codecs,
-		);
+		// Only the primary key columns, as in MySQL: every column would report a `$defaultFn` column
+		// that is not a key, and name each key after the table's first column.
+		this.config.returning = returning;
 		return this as any;
 	}
 

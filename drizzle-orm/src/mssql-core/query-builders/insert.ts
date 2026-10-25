@@ -1,3 +1,15 @@
+import {
+	expandInsertColumnList,
+	flattenEmbeddedValues,
+	flattenSelectedFields,
+	getTableShape,
+	type HasEmbeddedUnions,
+	type InsertSelectionShape,
+	type ListedInsertColumns,
+	type NestEmbedded,
+	type NestModel,
+	type ValidateNestedInsertSelection,
+} from '~/embed.ts';
 import { entityKind, is } from '~/entity.ts';
 import type { MsSqlDialect } from '~/mssql-core/dialect.ts';
 import type {
@@ -15,11 +27,11 @@ import type { SelectResultFields } from '~/query-builders/select.types.ts';
 import { QueryPromise } from '~/query-promise.ts';
 import type { Placeholder, Query, SQLWrapper } from '~/sql/sql.ts';
 import { SQL } from '~/sql/sql.ts';
-import { type InferInsertModel, type InferSelectModel, Table } from '~/table.ts';
+import { type InferInsertColumns, type InferSelectModel, Table } from '~/table.ts';
 import { type DrizzleTypeError, orderSelectedFields } from '~/utils.ts';
 import type { AnyMsSqlColumn, MsSqlColumn } from '../columns/common.ts';
 import { QueryBuilder } from './query-builder.ts';
-import type { SelectedFieldsFlat, SelectedFieldsOrdered } from './select.types.ts';
+import type { SelectedFields, SelectedFieldsOrdered } from './select.types.ts';
 
 export interface MsSqlInsertConfig<TTable extends MsSqlTable = MsSqlTable> {
 	table: TTable;
@@ -33,47 +45,56 @@ export interface MsSqlInsertConfig<TTable extends MsSqlTable = MsSqlTable> {
 export type MsSqlInsertValue<
 	TTable extends MsSqlTable,
 	TColumnsList extends string[] | 'all' = 'all',
-	TModel extends Record<string, any> = InferInsertModel<TTable>,
+	TModel extends Record<string, any> = InferInsertColumns<TTable>,
 > =
-	& {
-		[K in keyof TModel as TColumnsList extends 'all' ? K : Extract<K, TColumnsList[number]>]:
-			| TModel[K]
-			| SQL
-			| Placeholder;
-	}
+	& (HasEmbeddedUnions<TTable['_']['columns']> extends true ? NestModel<
+			TColumnsList extends 'all' ? TTable['_']['columns']
+				: Pick<TTable['_']['columns'], Extract<keyof TTable['_']['columns'], TColumnsList[number]>>,
+			'insert',
+			{ override: false },
+			SQL | Placeholder
+		>
+		: NestEmbedded<
+			{
+				[K in keyof TModel as TColumnsList extends 'all' ? K : Extract<K, TColumnsList[number]>]:
+					| TModel[K]
+					| SQL
+					| Placeholder;
+			}
+		>)
 	& {};
 
 export type MsSqlInsertSelection<
 	TTable extends MsSqlTable,
 	TColumnsList extends string[] | 'all' = 'all',
-	TModel extends Record<string, unknown> = InferInsertModel<TTable>,
-> =
-	& {
-		[K in keyof TModel as TColumnsList extends 'all' ? K : Extract<K, TColumnsList[number]>]:
-			| AnyMsSqlColumn
-			| SQL
-			| SQL.Aliased
-			| TModel[K];
-	}
-	& {};
+	TModel extends Record<string, unknown> = InferInsertColumns<TTable>,
+> = InsertSelectionShape<ListedInsertColumns<TModel, TColumnsList>, AnyMsSqlColumn>;
 
 export type ValidateInsertSelectionKey<
 	TTable extends MsSqlTable,
 	TSelection extends MsSqlInsertSelection<any>,
 	K extends keyof TSelection,
-> = K extends keyof InferInsertModel<TTable> ? TSelection[K]
-	: DrizzleTypeError<`Column "${K & string}" does not exist in table "${TTable['_']['name']}"`>;
+> = ValidateNestedInsertSelection<
+	Pick<TSelection, K>,
+	InferInsertColumns<TTable>,
+	InferInsertColumns<TTable>,
+	'all',
+	TTable['_']['name'],
+	'none'
+>[K];
 
 export type NoUnknownKeysInInsertSelection<
 	TTable extends MsSqlTable,
 	TSelection extends MsSqlInsertSelection<any>,
 	TColumnList extends string[] | 'all' = 'all',
-> = {
-	[K in keyof TSelection]: TColumnList extends string[]
-		? K extends TColumnList[number] ? ValidateInsertSelectionKey<TTable, TSelection, K>
-		: DrizzleTypeError<`Column "${K & string}" is not included in the insert column selection`>
-		: ValidateInsertSelectionKey<TTable, TSelection, K>;
-};
+> = ValidateNestedInsertSelection<
+	TSelection,
+	InferInsertColumns<TTable>,
+	InferInsertColumns<TTable>,
+	TColumnList,
+	TTable['_']['name'],
+	'none'
+>;
 
 export type NoDuplicateColumns<
 	T extends readonly unknown[],
@@ -118,7 +139,7 @@ export class MsSqlInsertBuilder<
 		this.session = session;
 		this.dialect = dialect;
 
-		this.config = { table, output, columnList };
+		this.config = { table, output, columnList: columnList && expandInsertColumnList(table, columnList) };
 	}
 
 	values(
@@ -134,6 +155,7 @@ export class MsSqlInsertBuilder<
 		if (values.length === 0) {
 			throw new Error('values() must be called with at least one value');
 		}
+		values = values.map((value) => flattenEmbeddedValues(this.table, value)) as typeof values;
 		return new MsSqlInsertBase(
 			this.table,
 			values,
@@ -169,7 +191,7 @@ export class MsSqlInsertBuilder<
 		const select = typeof selectQuery === 'function' ? selectQuery(new QueryBuilder()) : selectQuery;
 		if (!is(select, SQL)) {
 			const insertCols = Object.keys(this.table[Table.Symbol.Columns]);
-			const selected = Object.keys(select._.selectedFields);
+			const selected = Object.keys(flattenSelectedFields(select._.selectedFields));
 
 			for (const col of selected) {
 				if (!insertCols.includes(col)) {
@@ -210,11 +232,14 @@ export class MsSqlInsertBuilder<
 	 * ```
 	 */
 	output(): Omit<MsSqlInsertBuilder<TTable, TQueryResult, TPreparedQueryHKT, InferSelectModel<TTable>>, 'output'>;
-	output<SelectedFields extends SelectedFieldsFlat>(
-		fields: SelectedFields,
-	): Omit<MsSqlInsertBuilder<TTable, TQueryResult, TPreparedQueryHKT, SelectResultFields<SelectedFields>>, 'output'>;
+	output<TSelectedFields extends SelectedFields>(
+		fields: TSelectedFields,
+	): Omit<
+		MsSqlInsertBuilder<TTable, TQueryResult, TPreparedQueryHKT, SelectResultFields<TSelectedFields>>,
+		'output'
+	>;
 	output(
-		fields: SelectedFieldsFlat = this.table[Table.Symbol.Columns],
+		fields: SelectedFields = getTableShape(this.table) as SelectedFields,
 	) {
 		this.config.output = orderSelectedFields<MsSqlColumn>(fields, undefined, this.dialect.codecs);
 		return this as any;

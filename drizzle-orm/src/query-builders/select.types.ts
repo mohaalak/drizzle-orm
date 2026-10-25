@@ -1,5 +1,6 @@
 import type { ChangeColumnTableName, ColumnType, Dialect } from '~/column-builder.ts';
 import type { AnyColumn, Column, ColumnBaseConfig, GetColumnData, UpdateColConfig } from '~/column.ts';
+import type { EmbeddedColumnData, EmbeddedUnionTagKey, NestEmbedded, UnionSharedColumnData } from '~/embed.ts';
 import type { SelectedFields } from '~/operations.ts';
 import type { ColumnsSelection, SQL } from '~/sql/sql.ts';
 import type { Subquery } from '~/subquery.ts';
@@ -49,7 +50,7 @@ type SelectPartialResult<TFields, TNullability extends Record<string, JoinNullab
 	TNullability ? {
 		[Key in keyof TFields]: TFields[Key] extends infer TField
 			? TField extends Table ? TField['_']['name'] extends keyof TNullability ? ApplyNullability<
-						SelectResultFields<TField['_']['columns']>,
+						SelectResultFields<NestEmbedded<TField['_']['columns']>>,
 						TNullability[TField['_']['name']]
 					>
 				: never
@@ -64,18 +65,31 @@ type SelectPartialResult<TFields, TNullability extends Record<string, JoinNullab
 					'You can only select one column in the subquery'
 				>
 			: TField extends Record<string, any>
-				? TField[keyof TField] extends SQL | SQL.Aliased ? SelectPartialResult<TField, TNullability>
-				: TField[keyof TField] extends AnyColumn<{ tableName: infer TTableName extends string }> | SQL | SQL.Aliased
-					? Not<IsUnion<TTableName>> extends true ? ApplyNullability<
-							SelectResultFields<TField>,
-							TTableName extends keyof TNullability ? TNullability[TTableName] : 'nullable'
-						>
-					: SelectPartialResult<TField, TNullability>
+				? [EmbeddedUnionTagKey<TField>] extends [never] ? SelectPartialGroupResult<TField, TNullability>
+					// A `taggedUnion()` group is null when its table is, like the tag column it is read by.
+				: TField[EmbeddedUnionTagKey<TField>] extends AnyColumn<{ tableName: infer TTableName extends string }>
+					? ApplyNullability<
+						SelectResultField<TField>,
+						TTableName extends keyof TNullability ? TNullability[TTableName] : 'nullable'
+					>
 				: never
 			: never
 			: never;
 	}
 	: never;
+
+type SelectPartialGroupResult<
+	TField extends Record<string, any>,
+	TNullability extends Record<string, JoinNullability>,
+> = TField[keyof TField] extends SQL | SQL.Aliased ? SelectPartialResult<TField, TNullability>
+	: TField[keyof TField] extends AnyColumn<{ tableName: infer TTableName extends string }> | SQL | SQL.Aliased
+		? Not<IsUnion<TTableName>> extends true ? ApplyNullability<
+				SelectResultFields<TField>,
+				TTableName extends keyof TNullability ? TNullability[TTableName] : 'nullable'
+			>
+		: SelectPartialResult<TField, TNullability>
+	// A group holding further groups, such as an `embed()` group with one nested in it.
+	: SelectPartialResult<TField, TNullability>;
 
 export type MapColumnsToTableAlias<
 	TColumns extends ColumnsSelection,
@@ -98,7 +112,8 @@ export type AddAliasToSelection<
 		: {
 			[Key in keyof TSelection]: TSelection[Key] extends Column
 				? ChangeColumnTableName<TSelection[Key], TAlias, TDialect>
-				: TSelection[Key] extends Table ? AddAliasToSelection<TSelection[Key]['_']['columns'], TAlias, TDialect>
+				: TSelection[Key] extends Table
+					? AddAliasToSelection<NestEmbedded<TSelection[Key]['_']['columns']>, TAlias, TDialect>
 				: TSelection[Key] extends SQL | SQL.Aliased ? TSelection[Key]
 				: TSelection[Key] extends Subquery ? FromSingleKeyObject<
 						TSelection[Key]['_']['selectedFields'],
@@ -107,7 +122,8 @@ export type AddAliasToSelection<
 							: never,
 						'You can only select one column in the subquery'
 					>
-				: TSelection[Key] extends ColumnsSelection ? MapColumnsToTableAlias<TSelection[Key], TAlias, TDialect>
+				// a nested object, such as an `embed()` group, which may hold further groups
+				: TSelection[Key] extends ColumnsSelection ? AddAliasToSelection<TSelection[Key], TAlias, TDialect>
 				: never;
 		}
 >;
@@ -133,7 +149,8 @@ export type BuildSubquerySelection<
 			[Key in keyof TSelection]: TSelection[Key] extends SQL
 				? DrizzleTypeError<'You cannot reference this field without assigning it an alias first - use `.as(<alias>)`'>
 				: TSelection[Key] extends SQL.Aliased ? TSelection[Key]
-				: TSelection[Key] extends Table ? BuildSubquerySelection<TSelection[Key]['_']['columns'], TNullability>
+				: TSelection[Key] extends Table
+					? BuildSubquerySelection<NestEmbedded<TSelection[Key]['_']['columns']>, TNullability>
 				: TSelection[Key] extends Column
 					? ApplyNullabilityToColumn<TSelection[Key], TNullability[TSelection[Key]['_']['tableName']]>
 				: TSelection[Key] extends Subquery ? FromSingleKeyObject<
@@ -172,17 +189,42 @@ export type GetSelectTableName<TTable extends TableLike> = TTable extends Table 
 	: TTable extends SQL ? undefined
 	: never;
 
-export type GetSelectTableSelection<TTable extends TableLike> = TTable extends Table ? TTable['_']['columns']
+export type GetSelectTableSelection<TTable extends TableLike> = TTable extends Table
+	? NestEmbedded<TTable['_']['columns']>
 	: TTable extends Subquery | View ? Assume<TTable['_']['selectedFields'], ColumnsSelection>
 	: TTable extends SQL ? {}
 	: never;
 
 export type SelectResultField<T, TDeep extends boolean = true> = T extends DrizzleTypeError<any> ? T
-	: T extends Table ? Equal<TDeep, true> extends true ? SelectResultField<T['_']['columns'], false> : never
+	: T extends Table
+		? Equal<TDeep, true> extends true ? SelectResultField<NestEmbedded<T['_']['columns']>, false> : never
 	: T extends Column<any> ? GetColumnData<T>
 	: T extends SQL | SQL.Aliased ? T['_']['type']
-	: T extends Record<string, any> ? SelectResultFields<T, true>
+	: T extends Record<string, any> ? [EmbeddedUnionTagKey<T>] extends [never] ? SelectResultFields<T, true>
+		: SelectUnionResult<T, EmbeddedUnionTagKey<T>>
 	: never;
+
+/**
+ * A selected `taggedUnion()` group: one object per variant, holding the tag and that variant's columns.
+ */
+type SelectUnionResult<T extends Record<string, any>, TKey extends keyof T & string, TTags = GetColumnData<T[TKey]>> =
+	TTags extends string ? Simplify<
+			& { [K in TKey]: TTags }
+			& (TTags extends keyof T ? SelectUnionVariantResult<T[TTags]> : {})
+			& {
+				[K in keyof T as T[K] extends { _: { unionShared: { [P in TTags]: boolean } } } ? K : never]:
+					UnionSharedColumnData<T[K], TTags>;
+			}
+		>
+		: never;
+
+/** A variant's columns, read as the variant declares them rather than as the database stores them. */
+type SelectUnionVariantResult<T> = {
+	[K in keyof T]: T[K] extends Column<any> ? EmbeddedColumnData<T[K]>
+		: T[K] extends Record<string, any> ? [EmbeddedUnionTagKey<T[K]>] extends [never] ? SelectUnionVariantResult<T[K]>
+			: SelectUnionResult<T[K], EmbeddedUnionTagKey<T[K]>>
+		: never;
+};
 
 export type SelectResultFields<TSelectedFields, TDeep extends boolean = true> = Simplify<
 	{

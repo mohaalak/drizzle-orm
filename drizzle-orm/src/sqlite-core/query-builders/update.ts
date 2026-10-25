@@ -1,4 +1,11 @@
 import type { GetColumnData } from '~/column.ts';
+import {
+	getTableShape,
+	type HasEmbeddedUnions,
+	type NestEmbedded,
+	type NestEmbeddedPartial,
+	type NestModelPartial,
+} from '~/embed.ts';
 import { entityKind, is } from '~/entity.ts';
 import type { JoinType, SelectResultFields } from '~/query-builders/select.types.ts';
 import { SelectionProxyHandler } from '~/selection-proxy.ts';
@@ -7,7 +14,7 @@ import type { SQLiteDialect } from '~/sqlite-core/dialect.ts';
 import type { SQLiteSession } from '~/sqlite-core/session.ts';
 import { SQLiteTable } from '~/sqlite-core/table.ts';
 import { Subquery } from '~/subquery.ts';
-import { type InferInsertModel, Table } from '~/table.ts';
+import type { InferModelFromColumns } from '~/table.ts';
 import {
 	type Assume,
 	getTableLikeName,
@@ -36,16 +43,22 @@ export interface SQLiteUpdateConfig {
 
 export type SQLiteUpdateSetSource<
 	TTable extends SQLiteTable,
-	TModel extends Record<string, any> = InferInsertModel<TTable>,
+	TModel extends Record<string, any> = InferModelFromColumns<TTable['_']['columns'], 'insert'>,
 > =
-	& {
-		[Key in keyof TModel & string]?:
-			| GetColumnData<TTable['_']['columns'][Key], 'query'>
-			| SQL
-			| SQLiteColumn
-			| Placeholder
-			| undefined;
-	}
+	& (HasEmbeddedUnions<TTable['_']['columns']> extends true ? NestModelPartial<
+			Pick<TTable['_']['columns'], keyof TModel & string>,
+			SQL | SQLiteColumn | Placeholder | undefined
+		>
+		: NestEmbeddedPartial<
+			{
+				[Key in keyof TModel & string]?:
+					| GetColumnData<TTable['_']['columns'][Key], 'query'>
+					| SQL
+					| SQLiteColumn
+					| Placeholder
+					| undefined;
+			}
+		>)
 	& {};
 
 export interface SQLiteUpdateBuilderConstructor {
@@ -214,8 +227,8 @@ export type SQLiteUpdateJoinFn<
 	on:
 		| (
 			(
-				updateTable: T['_']['table']['_']['columns'],
-				from: T['_']['from'] extends SQLiteTable ? T['_']['from']['_']['columns']
+				updateTable: NestEmbedded<T['_']['table']['_']['columns']>,
+				from: T['_']['from'] extends SQLiteTable ? NestEmbedded<T['_']['from']['_']['columns']>
 					: T['_']['from'] extends Subquery | SQLiteViewBase ? T['_']['from']['_']['selectedFields']
 					: never,
 			) => SQL | undefined
@@ -319,7 +332,7 @@ export class SQLiteUpdateBase<
 			if (typeof on === 'function') {
 				const from = this.config.from
 					? is(table, SQLiteTable)
-						? table[Table.Symbol.Columns]
+						? getTableShape(table)
 						: is(table, Subquery)
 						? table._.selectedFields
 						: is(table, SQLiteViewBase)
@@ -328,7 +341,7 @@ export class SQLiteUpdateBase<
 					: undefined;
 				on = on(
 					new Proxy(
-						this.config.table[Table.Symbol.Columns],
+						getTableShape(this.config.table),
 						new SelectionProxyHandler({ sqlAliasedBehavior: 'sql', sqlBehavior: 'sql' }),
 					) as any,
 					from && new Proxy(
@@ -402,7 +415,7 @@ export class SQLiteUpdateBase<
 		if (typeof columns[0] === 'function') {
 			const orderBy = columns[0](
 				new Proxy(
-					this.config.table[Table.Symbol.Columns],
+					getTableShape(this.config.table),
 					new SelectionProxyHandler({ sqlAliasedBehavior: 'alias', sqlBehavior: 'sql' }),
 				) as any,
 			);
@@ -448,7 +461,7 @@ export class SQLiteUpdateBase<
 		fields: TSelectedFields,
 	): SQLiteUpdateReturning<this, TDynamic, TSelectedFields>;
 	returning(
-		fields: SelectedFields = this.config.table[SQLiteTable.Symbol.Columns],
+		fields: SelectedFields = getTableShape(this.config.table) as SelectedFields,
 	): SQLiteUpdateWithout<AnySQLiteUpdate, TDynamic, 'returning'> {
 		this.config.returning = orderSelectedFields<SQLiteColumn>(fields, undefined, this.dialect.codecs);
 		return this as any;

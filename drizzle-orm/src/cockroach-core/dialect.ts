@@ -11,6 +11,7 @@ import type { CockroachSelectConfig, SelectedFieldsOrdered } from '~/cockroach-c
 import { CockroachTable } from '~/cockroach-core/table.ts';
 import { CodecsCollection } from '~/codecs.ts';
 import { Column } from '~/column.ts';
+import { expandInsertColumnList, flattenSelectedFields } from '~/embed.ts';
 import { entityKind, is } from '~/entity.ts';
 import { DrizzleError } from '~/errors.ts';
 import type { MigrationConfig, MigrationMeta, MigratorInitFailResponse } from '~/migrator.ts';
@@ -782,13 +783,14 @@ export class CockroachDialect {
 		useSelectionCastCodecs,
 	}: CockroachInsertConfig): SQL {
 		const columns: Record<string, CockroachColumn> = table[Table.Symbol.Columns];
+		const insertColumnList = columnList && expandInsertColumnList(table, columnList);
 
-		const colEntries: [string, CockroachColumn][] = columnList
-			? columnList.map((name) => [name, columns[name]!])
+		const colEntries: [string, CockroachColumn][] = insertColumnList
+			? insertColumnList.map((name) => [name, columns[name]!])
 			: Object.entries(columns);
 		const colEntriesFiltered: [string, CockroachColumn][] = select && !is(valuesOrSelect, SQL)
 			? Object
-				.keys((valuesOrSelect as TypedQueryBuilder<any>).getSelectedFields())
+				.keys(flattenSelectedFields((valuesOrSelect as TypedQueryBuilder<any>)._.selectedFields))
 				.map((key) => [key, columns[key]] as [string, CockroachColumn])
 			: colEntries.filter(([_, col]) => !col.shouldDisableInsert());
 

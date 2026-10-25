@@ -6,7 +6,7 @@ import type { PgAsyncDatabase } from 'drizzle-orm/pg-core/async';
 import type { SingleStoreDatabase, SingleStoreTable } from 'drizzle-orm/singlestore-core';
 import type { SQLiteAsyncDatabase, SQLiteTable } from 'drizzle-orm/sqlite-core';
 import type { AbstractGenerator } from '../generators/Generators.ts';
-import type { Prettify } from './tables.ts';
+import type { Prettify, TableUnions } from './tables.ts';
 
 export type GeneratedValueType = number | bigint | string | Buffer | boolean | undefined | null;
 
@@ -92,6 +92,7 @@ export type GeneratePossibleGeneratorsTableType = Prettify<{
 	// repeatedValuesCount?: number,
 	// withFromTableName?: string,
 	columnsPossibleGenerators: GeneratePossibleGeneratorsColumnType[];
+	unions?: TableUnions;
 }>;
 
 export type RefinementsType = Prettify<{

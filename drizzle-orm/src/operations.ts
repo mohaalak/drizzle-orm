@@ -38,8 +38,13 @@ export type SelectedFieldsFlatFull<TColumn extends Column> = Record<
 
 export type SelectedFields<TColumn extends Column, TTable extends Table> = Record<
 	string,
-	SelectedFieldsFlat<TColumn>[string] | TTable | SelectedFieldsFlat<TColumn>
+	SelectedFieldsFlat<TColumn>[string] | TTable | SelectedFieldsNested<TColumn>
 >;
+
+/** A group of selected fields, which may hold further groups: an `embed()` group within a table. */
+export interface SelectedFieldsNested<TColumn extends Column> {
+	[key: string]: SelectedFieldsFlat<TColumn>[string] | SelectedFieldsNested<TColumn>;
+}
 
 export type SelectedFieldsOrdered<TColumn extends Column> = (
 	& {
