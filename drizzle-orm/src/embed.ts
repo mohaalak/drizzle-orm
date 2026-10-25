@@ -285,7 +285,15 @@ function sharedColumn(
 	tags: readonly string[],
 ): ColumnBuilderBase {
 	const configOf = (builder: ColumnBuilderBase) =>
-		(builder as unknown as { config: { name: string; notNull: boolean; columnType: string; dataType: string } }).config;
+		(builder as unknown as {
+			config: {
+				name: string;
+				notNull: boolean;
+				columnType: string;
+				dataType: string;
+				unionShared?: Record<string, boolean>;
+			};
+		}).config;
 	const [[firstVariant, first]] = declarations as [readonly [string, ColumnBuilderBase]];
 	const firstConfig = configOf(first);
 	for (const [variant, builder] of declarations.slice(1)) {
@@ -302,6 +310,10 @@ function sharedColumn(
 		}
 	}
 
+	// Each variant's rows keep the nullability that variant declares it with.
+	firstConfig.unionShared = Object.fromEntries(
+		declarations.map(([variant, builder]) => [variant, configOf(builder).notNull === true]),
+	);
 	firstConfig.notNull = declarations.length === tags.length
 		&& declarations.every(([, builder]) => configOf(builder).notNull);
 	return first;
@@ -412,17 +424,34 @@ function markUnionMember(builder: ColumnBuilderBase, path: string, unions: reado
 		path: path.slice(union.root.length).split(EmbeddedKeySeparator),
 	}));
 
+	const innermost = unions.at(-1)!;
+	const isTag = path === innermost.root + innermost.info.key;
 	if (inVariant) {
 		// Another variant's rows leave this column empty.
 		if (config['primaryKey']) {
 			throw new Error(`Column "${path}" is in a union variant, so it cannot be a primary key`);
 		}
+		// Its own variant's rows keep the nullability it was declared with.
+		config['unionMember'] = { notNull: isTag || config['notNull'] === true };
 		config['notNull'] = false;
 		return;
 	}
 
-	const innermost = unions.at(-1)!;
-	if (path === innermost.root + innermost.info.key) config['notNull'] = true;
+	if (isTag) config['notNull'] = true;
+}
+
+/**
+ * Whether a `taggedUnion()` column is `NOT NULL` in the rows of its own variant: a variant's column as
+ * declared, and a column variants share as variant `tag` declares it. Other columns are as stored.
+ *
+ * @internal
+ */
+export function unionColumnNotNull(column: Column, tag?: string): boolean {
+	const config = (column as unknown as {
+		config: { unionMember?: { notNull: boolean }; unionShared?: Record<string, boolean> };
+	}).config;
+	if (tag !== undefined && config.unionShared) return config.unionShared[tag] === true;
+	return config.unionMember?.notNull ?? column.notNull;
 }
 
 function assertUniqueUnionColumnNames(builders: Record<string, ColumnBuilderBase>) {
@@ -1264,7 +1293,8 @@ type ModelOf<
  * Whether a column is `NOT NULL` in the rows of its own variant: a variant's column is nullable in
  * the database, but as declared within the variant it belongs to.
  */
-type DeclaredColumnNotNull<TColumn> = TColumn extends { _: { unionMember: { notNull: infer TNotNull } } } ? TNotNull
+export type DeclaredColumnNotNull<TColumn> = TColumn extends { _: { unionMember: { notNull: infer TNotNull } } }
+	? TNotNull
 	: TColumn extends { _: { notNull: true } } ? true
 	: false;
 
@@ -1274,10 +1304,14 @@ type ColumnValue<TColumn extends Column, TNotNull> = TNotNull extends true ? TCo
 /** A column's value as its own variant reads it. */
 export type EmbeddedColumnData<TColumn extends Column> = ColumnValue<TColumn, DeclaredColumnNotNull<TColumn>>;
 
+/** Whether a shared column is `NOT NULL` in the rows of variant `TTag`. */
+export type UnionSharedColumnNotNull<TColumn extends Column, TTag extends string> = TColumn['_'] extends
+	{ unionShared: { [K in TTag]: true } } ? true : false;
+
 /** A shared column's value in the rows of variant `TTag`. */
 export type UnionSharedColumnData<TColumn extends Column, TTag extends string> = ColumnValue<
 	TColumn,
-	TColumn['_'] extends { unionShared: { [K in TTag]: true } } ? true : false
+	UnionSharedColumnNotNull<TColumn, TTag>
 >;
 
 type InsertKeyRest<TColumn extends Column, TOverride> = TColumn['_']['generated'] extends undefined

@@ -34,3 +34,6 @@ export function expectEnumValues<T extends z.ZodEnum<any>>(t: TestContext, expec
 }
 
 export function Expect<_ extends true>() {}
+
+/** Expands every nested object type, so types built through different helpers compare equal */
+export type DeepSimplify<T> = T extends object ? { [K in keyof T]: DeepSimplify<T[K]> } : T;

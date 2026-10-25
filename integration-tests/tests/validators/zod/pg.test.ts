@@ -1,4 +1,5 @@
 import { type Equal, sql } from 'drizzle-orm';
+import type { NestModelPartial } from 'drizzle-orm/embed';
 import {
 	customType,
 	embed,
@@ -11,6 +12,7 @@ import {
 	pgTable,
 	pgView,
 	serial,
+	taggedUnion,
 	text,
 } from 'drizzle-orm/pg-core';
 import { CONSTANTS } from 'drizzle-orm/utils';
@@ -19,7 +21,7 @@ import { bigintStringModeSchema, jsonSchema } from 'drizzle-orm/zod/column';
 import type { TopLevelCondition } from 'json-rules-engine';
 import { expect, test } from 'vitest';
 import { z } from 'zod/v4';
-import { Expect, expectEnumValues, expectSchemaShape } from './utils';
+import { type DeepSimplify, Expect, expectEnumValues, expectSchemaShape } from './utils';
 
 const integerSchema = z.int().gte(CONSTANTS.INT32_MIN).lte(CONSTANTS.INT32_MAX);
 const integerNullableSchema = integerSchema.nullable();
@@ -204,6 +206,143 @@ test('embedded columns - view selecting a table', (t) => {
 	});
 	expectSchemaShape(t, expected.shape.user).from(result.shape.user);
 	Expect<Equal<typeof result, typeof expected>>();
+});
+
+const unionTable = pgTable('test', {
+	id: serial().primaryKey(),
+	uploader: taggedUnion('kind', text(), {
+		staff: { staffId: integer().notNull(), note: text(), rank: integer().notNull().default(1) },
+		parent: {
+			parentId: integer().notNull(),
+			phone: embed({ number: text().notNull() }),
+			via: taggedUnion('channel', text(), {
+				app: { version: text().notNull() },
+				email: { address: text().notNull() },
+			}),
+		},
+		system: {},
+	}),
+	owner: taggedUnion('kind', text(), {
+		campus: { campusId: integer().notNull() },
+		staff: { campusId: integer(), staffId: integer().notNull() },
+		nobody: {},
+	}),
+});
+
+const staffRow = { kind: 'staff', staffId: 1, note: null, rank: 2 } as const;
+const parentRow = {
+	kind: 'parent',
+	parentId: 2,
+	phone: { number: '123' },
+	via: { channel: 'email', address: 'a@b.c' },
+} as const;
+
+test('tagged union - select', () => {
+	const result = createSelectSchema(unionTable);
+	Expect<Equal<z.infer<typeof result>, typeof unionTable.$inferSelect>>();
+
+	const rows = [
+		{ id: 1, uploader: staffRow, owner: { kind: 'campus', campusId: 1 } },
+		{ id: 2, uploader: parentRow, owner: { kind: 'staff', campusId: null, staffId: 3 } },
+		{ id: 3, uploader: { kind: 'system' }, owner: { kind: 'nobody' } },
+	];
+	for (const row of rows) expect(result.parse(row)).toStrictEqual(row);
+
+	const row = rows[0]!;
+	// Unknown tag
+	expect(result.safeParse({ ...row, uploader: { kind: 'robot' } }).success).toBe(false);
+	// Missing a required field of the variant, including a nullable one
+	expect(result.safeParse({ ...row, uploader: { kind: 'staff', note: null, rank: 1 } }).success).toBe(false);
+	expect(result.safeParse({ ...row, uploader: { kind: 'staff', staffId: 1, rank: 1 } }).success).toBe(false);
+	// A field of another variant
+	expect(result.safeParse({ ...row, uploader: { kind: 'system', staffId: 1 } }).success).toBe(false);
+	expect(result.safeParse({ ...row, owner: { kind: 'nobody', campusId: 1 } }).success).toBe(false);
+	// A shared column is nullable only in the variants that declare it so
+	expect(result.safeParse({ ...row, owner: { kind: 'campus', campusId: null } }).success).toBe(false);
+	// A nested union is discriminated too
+	expect(result.safeParse({ ...row, uploader: { ...parentRow, via: { channel: 'app', address: 'a' } } }).success)
+		.toBe(false);
+});
+
+test('tagged union - insert', () => {
+	const result = createInsertSchema(unionTable);
+	Expect<Equal<z.infer<typeof result>, typeof unionTable.$inferInsert>>();
+
+	const values = [
+		{ uploader: { kind: 'staff', staffId: 1 }, owner: { kind: 'staff', staffId: 3 } },
+		{ uploader: parentRow, owner: { kind: 'campus', campusId: 1 } },
+		{ uploader: { kind: 'system' }, owner: { kind: 'nobody' } },
+	];
+	for (const value of values) expect(result.parse(value)).toStrictEqual(value);
+
+	const value = values[0]!;
+	expect(result.safeParse({ owner: value.owner }).success).toBe(false);
+	expect(result.safeParse({ ...value, uploader: { kind: 'robot' } }).success).toBe(false);
+	expect(result.safeParse({ ...value, uploader: { kind: 'staff' } }).success).toBe(false);
+	expect(result.safeParse({ ...value, uploader: { kind: 'system', staffId: 1 } }).success).toBe(false);
+	expect(result.safeParse({ ...value, uploader: { ...parentRow, phone: undefined } }).success).toBe(false);
+});
+
+test('tagged union - update', () => {
+	const result = createUpdateSchema(unionTable);
+	Expect<
+		Equal<
+			DeepSimplify<z.infer<typeof result>>,
+			DeepSimplify<NestModelPartial<typeof unionTable['_']['columns'], never>>
+		>
+	>();
+
+	const sets = [
+		{},
+		{ uploader: { kind: 'staff', note: 'renamed' } },
+		{ uploader: { kind: 'parent', via: { channel: 'app' } }, owner: { kind: 'campus' } },
+	];
+	for (const set of sets) expect(result.parse(set)).toStrictEqual(set);
+
+	expect(result.safeParse({ uploader: { staffId: 1 } }).success).toBe(false);
+	expect(result.safeParse({ uploader: null }).success).toBe(false);
+	expect(result.safeParse({ uploader: { kind: 'robot' } }).success).toBe(false);
+	expect(result.safeParse({ uploader: { kind: 'system', staffId: 1 } }).success).toBe(false);
+});
+
+test('tagged union - refine', () => {
+	const result = createSelectSchema(unionTable, {
+		id: (schema) => schema.max(100),
+		uploader: {
+			staff: { staffId: (schema) => schema.max(10) },
+			parent: { via: { app: { version: z.string().max(1) } } },
+		},
+		owner: { campusId: (schema) => schema.min(1) },
+	});
+	Expect<Equal<z.infer<typeof result>, typeof unionTable.$inferSelect>>();
+
+	const row = { id: 1, uploader: staffRow, owner: { kind: 'campus', campusId: 1 } };
+	expect(result.parse(row)).toStrictEqual(row);
+	expect(result.safeParse({ ...row, id: 101 }).success).toBe(false);
+	expect(result.safeParse({ ...row, uploader: { ...staffRow, staffId: 11 } }).success).toBe(false);
+	expect(result.safeParse({ ...row, uploader: { ...parentRow, via: { channel: 'app', version: '22' } } }).success)
+		.toBe(false);
+	// A shared column's refinement applies in every variant that declares it
+	expect(result.safeParse({ ...row, owner: { kind: 'campus', campusId: 0 } }).success).toBe(false);
+	expect(result.safeParse({ ...row, owner: { kind: 'staff', campusId: 0, staffId: 1 } }).success).toBe(false);
+	expect(result.safeParse({ ...row, owner: { kind: 'staff', campusId: null, staffId: 1 } }).success).toBe(true);
+
+	// @ts-expect-error - a union's tag column cannot be refined
+	createSelectSchema(unionTable, { uploader: { kind: z.string() } });
+});
+
+test('tagged union - view selecting a union', () => {
+	const view = pgView('test_view').as((qb) =>
+		qb.select({ uploader: unionTable.uploader, staff: unionTable.uploader.staff }).from(unionTable)
+	);
+
+	const result = createSelectSchema(view);
+	Expect<Equal<DeepSimplify<z.infer<typeof result>>, DeepSimplify<typeof view.$inferSelect>>>();
+
+	// Outside its union, a variant's columns read as stored: nullable
+	const row = { uploader: staffRow, staff: { staffId: null, note: null, rank: null } };
+	expect(result.parse(row)).toStrictEqual(row);
+	expect(result.safeParse({ ...row, uploader: { kind: 'robot' } }).success).toBe(false);
 });
 
 test('view qb - select', (t) => {
