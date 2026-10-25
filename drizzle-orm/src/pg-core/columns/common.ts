@@ -1,6 +1,6 @@
 import type { ColumnType, GeneratedColumnConfig, GeneratedIdentityConfig } from '~/column-builder.ts';
 import { Column } from '~/column.ts';
-import type { EmbedBuilder, FlattenEmbedBuilders } from '~/embed.ts';
+import type { EmbedBuilder, FlattenEmbedBuilders, UnionColumnMarkers } from '~/embed.ts';
 import { entityKind, is } from '~/entity.ts';
 import type { ForeignKey, UpdateDeleteAction } from '~/pg-core/foreign-keys.ts';
 import { ForeignKeyBuilder } from '~/pg-core/foreign-keys.ts';
@@ -125,7 +125,7 @@ export type ResolvePgColumnConfig<
 	enumValues: T extends { enumValues: infer E extends string[] } ? E : undefined;
 	identity: T['identity'] extends 'always' | 'byDefault' ? T['identity'] : undefined;
 	generated: T['generated'] extends true ? true : undefined;
-} & (T extends { unionTag: infer TKey extends string } ? { unionTag: TKey } : {});
+} & UnionColumnMarkers<T>;
 
 export interface AnyPgColumnBuilder {
 	readonly _: PgColumnBuilderConfig;

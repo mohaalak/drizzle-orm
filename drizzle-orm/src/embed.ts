@@ -114,6 +114,10 @@ export class UnionBuilder<
 		/** @internal */
 		readonly unionKey: TKey,
 		columns: TColumns,
+		/** @internal */
+		readonly tags: readonly string[],
+		/** @internal Each shared column's key, with the variants that declare it. */
+		readonly shared: Readonly<Record<string, readonly string[]>>,
 		config?: EmbedConfig,
 	) {
 		super(columns, config);
@@ -127,14 +131,66 @@ export type UnionTagBuilder<TBuilder extends ColumnBuilderBase, TTags extends st
 	_: Simplify<Omit<TBuilder['_'], '$type' | 'notNull'> & { $type: TTags; notNull: true; unionTag: TKey }>;
 };
 
-/** The columns a `taggedUnion()` group holds: its tag column and one group per variant. */
+type ColumnKeysOf<TFields> = {
+	[K in keyof TFields & string]: TFields[K] extends EmbedBuilder<any> ? never : K;
+}[keyof TFields & string];
+
+type OtherVariantColumnKeys<TVariants, TTag extends keyof TVariants> = Exclude<keyof TVariants, TTag> extends
+	infer TOther ? TOther extends keyof TVariants ? ColumnKeysOf<TVariants[TOther]> : never
+	: never;
+
+/** The keys of the columns two or more variants declare, which they share. */
+export type UnionSharedKeys<TVariants> = {
+	[T in keyof TVariants]: Extract<ColumnKeysOf<TVariants[T]>, OtherVariantColumnKeys<TVariants, T>>;
+}[keyof TVariants];
+
+type VariantsWith<TVariants, TField extends string> = {
+	[T in keyof TVariants & string]: TField extends keyof TVariants[T] ? T : never;
+}[keyof TVariants & string];
+
+type SharedDeclaration<TVariants, TField extends string> = Assume<
+	TVariants[VariantsWith<TVariants, TField>] extends infer TFields
+		? TFields extends { [K in TField]: infer TBuilder } ? TBuilder : never
+		: never,
+	ColumnBuilderBase
+>;
+
+type DeclaredNotNull<TBuilder> = TBuilder extends { _: { notNull: true } } ? true : false;
+
+/**
+ * A column several variants of a `taggedUnion()` share. It is `NOT NULL` only when every variant
+ * declares it `NOT NULL`; `unionShared` says, per variant that has it, whether that variant does.
+ */
+export type UnionSharedBuilder<TVariants, TField extends string> = {
+	_: Simplify<
+		& Omit<SharedDeclaration<TVariants, TField>['_'], 'notNull'>
+		& {
+			notNull: [keyof TVariants] extends [VariantsWith<TVariants, TField>] ? false extends {
+					[T in VariantsWith<TVariants, TField>]: DeclaredNotNull<TVariants[T][TField & keyof TVariants[T]]>;
+				}[VariantsWith<TVariants, TField>] ? false
+				: true
+				: false;
+			unionShared: {
+				[T in VariantsWith<TVariants, TField>]: DeclaredNotNull<TVariants[T][TField & keyof TVariants[T]]>;
+			};
+		}
+	>;
+};
+
+/**
+ * The columns a `taggedUnion()` group holds: its tag column, the columns variants share, and one
+ * group per variant.
+ */
 export type UnionColumns<
 	TKey extends string,
 	TTag extends ColumnBuilderBase,
 	TVariants extends Record<string, UnionVariantColumns>,
 > = Simplify<
 	& { [K in TKey]: UnionTagBuilder<TTag, keyof TVariants & string, TKey> }
-	& { [K in keyof TVariants & string]: UnionVariantBuilder<TVariants[K]> }
+	& { [F in UnionSharedKeys<TVariants> & string]: UnionSharedBuilder<TVariants, F> }
+	& {
+		[K in keyof TVariants & string]: UnionVariantBuilder<Omit<TVariants[K], UnionSharedKeys<TVariants>>>;
+	}
 >;
 
 /**
@@ -143,10 +199,15 @@ export type UnionColumns<
  *
  * The columns stay flat in the database. The tag column is named like any grouped column
  * (`uploader` + `kind` → `uploader_kind`) and is `NOT NULL`. A variant's columns take the union's
- * prefix without the variant's name (`uploader_staffId`), and are always nullable. Two variants
- * that would give columns the same name must name one of them themselves.
+ * prefix without the variant's name (`uploader_staffId`), and are always nullable.
  *
- * Writing a variant fills the tag column and clears the columns of every other variant.
+ * Variants that declare a column under the same key share it: it is one column, reached on the
+ * union (`files.uploader.campusId`), and `NOT NULL` when every variant declares it `NOT NULL`. Its
+ * declarations must be of the same type and name. Two columns of different keys that would get
+ * the same name must be given names of their own.
+ *
+ * Writing a variant fills the tag column and clears the columns of every other variant, keeping
+ * the shared columns it declares.
  *
  * @example
  * ```ts
@@ -178,12 +239,72 @@ export function taggedUnion<
 	if (Object.prototype.hasOwnProperty.call(variants, key)) {
 		throw new Error(`A union variant cannot be named "${key}", the key of its tag column`);
 	}
+	const entries = Object.entries(variants as Record<string, UnionVariantColumns>);
+	const tags = entries.map(([name]) => name);
+
+	// A column key two or more variants declare is one shared column.
+	const declaredBy: Record<string, string[]> = {};
+	for (const [name, fields] of entries) {
+		for (const [field, value] of Object.entries(fields)) {
+			if (field === key) {
+				throw new Error(`Variant "${name}" cannot have a column "${key}", the key of its union's tag column`);
+			}
+			if (!is(value, EmbedBuilder)) (declaredBy[field] ??= []).push(name);
+		}
+	}
+	const shared: Record<string, string[]> = {};
+	for (const [field, names] of Object.entries(declaredBy)) {
+		if (names.length > 1) shared[field] = names;
+	}
 
 	const columns: Record<string, ColumnBuilderBase | EmbedBuilder> = { [key]: tag };
-	for (const [name, fields] of Object.entries(variants as Record<string, UnionVariantColumns>)) {
-		columns[name] = new UnionVariantBuilder(fields);
+	for (const [field, names] of Object.entries(shared)) {
+		if (tags.includes(field)) {
+			throw new Error(`Column "${field}" shared by variants ${names.join(', ')} cannot be named like a variant`);
+		}
+		columns[field] = sharedColumn(
+			field,
+			names.map((name) => [name, variants[name]![field] as ColumnBuilderBase]),
+			tags,
+		);
 	}
-	return new UnionBuilder(key, columns as UnionColumns<TKey, TTag, TVariants>, config);
+	for (const [name, fields] of entries) {
+		const own: UnionVariantColumns = {};
+		for (const [field, value] of Object.entries(fields)) {
+			if (!shared[field]) own[field] = value;
+		}
+		columns[name] = new UnionVariantBuilder(own);
+	}
+	return new UnionBuilder(key, columns as UnionColumns<TKey, TTag, TVariants>, tags, shared, config);
+}
+
+/** The one builder a shared column is built from: the first variant's, `NOT NULL` only if every variant's is. */
+function sharedColumn(
+	field: string,
+	declarations: (readonly [variant: string, builder: ColumnBuilderBase])[],
+	tags: readonly string[],
+): ColumnBuilderBase {
+	const configOf = (builder: ColumnBuilderBase) =>
+		(builder as unknown as { config: { name: string; notNull: boolean; columnType: string; dataType: string } }).config;
+	const [[firstVariant, first]] = declarations as [readonly [string, ColumnBuilderBase]];
+	const firstConfig = configOf(first);
+	for (const [variant, builder] of declarations.slice(1)) {
+		const config = configOf(builder);
+		if (config.columnType !== firstConfig.columnType || config.dataType !== firstConfig.dataType) {
+			throw new Error(
+				`Column "${field}" is shared by variants "${firstVariant}" and "${variant}", so it must be of the same type in both`,
+			);
+		}
+		if (config.name !== firstConfig.name) {
+			throw new Error(
+				`Column "${field}" is shared by variants "${firstVariant}" and "${variant}", so it must have the same name in both`,
+			);
+		}
+	}
+
+	firstConfig.notNull = declarations.length === tags.length
+		&& declarations.every(([, builder]) => configOf(builder).notNull);
+	return first;
 }
 
 /**
@@ -198,6 +319,8 @@ export interface EmbeddedUnionInfo {
 	/** The key of the tag column within the union's group. */
 	readonly key: string;
 	readonly tags: readonly string[];
+	/** Each shared column's key, with the variants that declare it. */
+	readonly shared: Readonly<Record<string, readonly string[]>>;
 }
 
 /**
@@ -245,10 +368,7 @@ export function flattenEmbedBuilders<TBuilder extends ColumnBuilderBase>(
 	for (const [key, value] of Object.entries(columns)) {
 		const path = keyPrefix + key;
 		if (is(value, UnionBuilder)) {
-			const info: EmbeddedUnionInfo = {
-				key: value.unionKey,
-				tags: Object.keys(value.columns).filter((name) => name !== value.unionKey),
-			};
+			const info: EmbeddedUnionInfo = { key: value.unionKey, tags: value.tags, shared: value.shared };
 			flattenEmbedBuilders(
 				value.columns,
 				casingFn,
@@ -497,7 +617,7 @@ export function flattenEmbeddedValues(table: Table, value: Record<string, unknow
 			}
 
 			// A union is written as one variant: its tag, its columns, and every other variant cleared.
-			const tags = embeddedUnionsOf(node[unionKey])!.at(-1)!.union.tags;
+			const { tags, shared } = embeddedUnionsOf(node[unionKey])!.at(-1)!.union;
 			const { [unionKey]: tag, ...fields } = entry;
 			if (typeof tag !== 'string' || !tags.includes(tag)) {
 				throw new Error(
@@ -510,7 +630,16 @@ export function flattenEmbeddedValues(table: Table, value: Record<string, unknow
 			for (const other of tags) {
 				if (other !== tag) clear(groupPath + other + EmbeddedKeySeparator);
 			}
-			visit((node[tag] ?? new EmbeddedColumns()) as EmbeddedColumns, fields, groupPath + tag + EmbeddedKeySeparator);
+			const own: Record<string, unknown> = {};
+			for (const [field, value] of Object.entries(fields)) {
+				if (!shared[field]) own[field] = value;
+				else if (shared[field]!.includes(tag)) result[groupPath + field] = value;
+			}
+			// A shared column the variant does not declare is cleared like the other variants' columns.
+			for (const [field, declaredBy] of Object.entries(shared)) {
+				if (!declaredBy.includes(tag)) result[groupPath + field] = null;
+			}
+			visit((node[tag] ?? new EmbeddedColumns()) as EmbeddedColumns, own, groupPath + tag + EmbeddedKeySeparator);
 		}
 	};
 	visit(getTableShape(table), value, '');
@@ -562,14 +691,16 @@ export function selectedFieldsUnionSites(
  * `{ kind: 'staff', staff: { staffId: 1 }, parent: { parentId: null } }` →
  * `{ kind: 'staff', staffId: 1 }`. Keys that are not a variant's group are kept.
  */
-function foldUnion(value: Record<string, unknown>, { key, tags }: EmbeddedUnionInfo): Record<string, unknown> {
+function foldUnion(value: Record<string, unknown>, { key, tags, shared }: EmbeddedUnionInfo): Record<string, unknown> {
+	const tag = value[key];
 	const result: Record<string, unknown> = {};
 	for (const [name, entry] of Object.entries(value)) {
 		if (tags.includes(name) && isPlainObject(entry)) continue;
+		// A shared column belongs to the row only when its variant declares it.
+		if (shared[name] && !shared[name]!.includes(tag as string)) continue;
 		result[name] = entry;
 	}
 
-	const tag = value[key];
 	const variant = typeof tag === 'string' && tags.includes(tag) ? value[tag] : undefined;
 	if (isPlainObject(variant)) Object.assign(result, variant);
 	return result;
@@ -1079,14 +1210,18 @@ export type ValidateNestedInsertSelection<
  * Flattens a table definition's `embed()` groups into dotted keys, mirroring
  * {@link flattenEmbedBuilders}.
  */
-export type FlattenEmbedBuilders<TColumns, TPrefix extends string = ''> = Simplify<
+export type FlattenEmbedBuilders<TColumns, TPrefix extends string = '', TInVariant extends boolean = false> = Simplify<
 	UnionToIntersection<
 		{
 			[K in keyof TColumns & string]: TColumns[K] extends EmbedBuilder<infer TInner>
 				// A group without columns, such as a union variant that carries nothing, adds no keys.
 				? [keyof TInner] extends [never] ? {}
-				: FlattenEmbedBuilders<TInner, `${TPrefix}${K}.`>
-				: { [P in `${TPrefix}${K}`]: TColumns[K] };
+				: FlattenEmbedBuilders<
+					TInner,
+					`${TPrefix}${K}.`,
+					TInVariant extends true ? true : TColumns[K] extends { _: { unionVariant: true } } ? true : false
+				>
+				: { [P in `${TPrefix}${K}`]: TInVariant extends true ? MarkUnionMember<TColumns[K]> : TColumns[K] };
 		}[keyof TColumns & string]
 	>
 >;
@@ -1125,6 +1260,87 @@ type ModelOf<
 			| TExtra;
 	};
 
+/**
+ * Whether a column is `NOT NULL` in the rows of its own variant: a variant's column is nullable in
+ * the database, but as declared within the variant it belongs to.
+ */
+type DeclaredColumnNotNull<TColumn> = TColumn extends { _: { unionMember: { notNull: infer TNotNull } } } ? TNotNull
+	: TColumn extends { _: { notNull: true } } ? true
+	: false;
+
+type ColumnValue<TColumn extends Column, TNotNull> = TNotNull extends true ? TColumn['_']['data']
+	: TColumn['_']['data'] | null;
+
+/** A column's value as its own variant reads it. */
+export type EmbeddedColumnData<TColumn extends Column> = ColumnValue<TColumn, DeclaredColumnNotNull<TColumn>>;
+
+/** A shared column's value in the rows of variant `TTag`. */
+export type UnionSharedColumnData<TColumn extends Column, TTag extends string> = ColumnValue<
+	TColumn,
+	TColumn['_'] extends { unionShared: { [K in TTag]: true } } ? true : false
+>;
+
+type InsertKeyRest<TColumn extends Column, TOverride> = TColumn['_']['generated'] extends undefined
+	? TColumn['_']['identity'] extends 'always' ? TOverride extends true ? 'optional' : 'excluded'
+	: 'optional'
+	: 'excluded';
+
+/** Mirrors `RequiredKeyOnly` and `OptionalKeyOnly`, with the column's nullability given. */
+type InsertKeyKind<TColumn extends Column, TNotNull, TOverride> = TNotNull extends true
+	? TColumn['_']['hasDefault'] extends false ? 'required' : InsertKeyRest<TColumn, TOverride>
+	: InsertKeyRest<TColumn, TOverride>;
+
+/** {@link InferModelFromColumns}, with each column's nullability given by `TNotNull`. */
+type ModelWith<
+	TColumns extends Columns,
+	TNotNull,
+	TInferMode extends 'select' | 'insert',
+	TOverride,
+	TExtra,
+> = TInferMode extends 'insert' ?
+		& {
+			[
+				K in keyof TColumns & string as InsertKeyKind<TColumns[K], TNotNull[K & keyof TNotNull], TOverride> extends
+					'required' ? K
+					: never
+			]:
+				| ColumnValue<TColumns[K], TNotNull[K & keyof TNotNull]>
+				| TExtra;
+		}
+		& {
+			[
+				K in keyof TColumns & string as InsertKeyKind<TColumns[K], TNotNull[K & keyof TNotNull], TOverride> extends
+					'optional' ? K : never
+			]?:
+				| ColumnValue<TColumns[K], TNotNull[K & keyof TNotNull]>
+				| TExtra
+				| undefined;
+		}
+	: { [K in keyof TColumns & string]: ColumnValue<TColumns[K], TNotNull[K & keyof TNotNull]> | TExtra };
+
+type DeclaredNotNullMap<TColumns> = { [K in keyof TColumns]: DeclaredColumnNotNull<TColumns[K]> };
+
+/** The columns shared by the variants of the union at `TPath` that variant `TTag` declares, keyed by field. */
+type UnionSharedColumnsOf<TColumns, TPath extends string, TTag extends string> = {
+	[
+		K in keyof TColumns as K extends `${TPath}.${infer TField}` ? TField extends `${string}.${string}` ? never
+			: TColumns[K] extends { _: { unionShared: { [P in TTag]: boolean } } } ? TField
+			: never
+			: never
+	]: TColumns[K];
+};
+
+type UnionSharedNotNull<TColumns, TTag extends string> = {
+	[K in keyof TColumns]: TColumns[K] extends { _: { unionShared: { [P in TTag]: true } } } ? true : false;
+};
+
+/** Keys of the columns that belong to a union: its tag, shared and variant columns. */
+type UnionMemberKeys<TColumns> = {
+	[K in keyof TColumns & string]: TColumns[K] extends
+		{ _: { unionTag: string } | { unionMember: unknown } | { unionShared: unknown } } ? K
+		: never;
+}[keyof TColumns & string];
+
 type UnionModel<
 	TColumns,
 	TPath extends string,
@@ -1141,6 +1357,13 @@ type UnionModel<
 			TConfig,
 			TExtra
 		>
+		& ModelWith<
+			Assume<UnionSharedColumnsOf<TColumns, TPath, TTags>, Columns>,
+			UnionSharedNotNull<UnionSharedColumnsOf<TColumns, TPath, TTags>, TTags>,
+			TInferMode,
+			TConfig['override'],
+			TExtra
+		>
 	>
 	: never;
 
@@ -1150,13 +1373,9 @@ type ModelWithUnions<
 	TConfig extends { override?: boolean },
 	TExtra,
 	TTagKeys extends string = OuterUnionTagKeys<TColumns>,
+	TRest extends Columns = Assume<Omit<TColumns, Extract<keyof TColumns, `${ParentPath<TTagKeys>}.${string}`>>, Columns>,
 > =
-	& ModelOf<
-		Assume<Omit<TColumns, Extract<keyof TColumns, `${ParentPath<TTagKeys>}.${string}`>>, Columns>,
-		TInferMode,
-		TConfig,
-		TExtra
-	>
+	& ModelWith<TRest, DeclaredNotNullMap<TRest>, TInferMode, TConfig['override'], TExtra>
 	& {
 		[K in TTagKeys as ParentPath<K>]: UnionModel<
 			TColumns,
@@ -1180,12 +1399,17 @@ export type NestModel<
 	TInferMode extends 'select' | 'insert' = 'select',
 	TConfig extends { override?: boolean } = { override: false },
 	TExtra = never,
-> = [UnionTagKeys<TColumns>] extends [never] ? NestEmbedded<ModelOf<TColumns, TInferMode, TConfig, TExtra>>
+> = [UnionMemberKeys<TColumns>] extends [never] ? NestEmbedded<ModelOf<TColumns, TInferMode, TConfig, TExtra>>
 	: NestEmbedded<Simplify<ModelWithUnions<TColumns, TInferMode, TConfig, TExtra>>>;
 
 type UnionPartial<TColumns, TPath extends string, TKey extends string, TTags, TExtra> = TTags extends string ? Simplify<
 		& { [P in TKey]: TTags }
 		& NestModelPartial<Assume<UnionVariantColumnsOf<TColumns, `${TPath}.${TTags}.`>, Columns>, TExtra>
+		& {
+			[F in keyof UnionSharedColumnsOf<TColumns, TPath, TTags>]?:
+				| UnionSharedColumnData<Assume<UnionSharedColumnsOf<TColumns, TPath, TTags>[F], Column>, TTags>
+				| TExtra;
+		}
 	>
 	: never;
 
@@ -1194,12 +1418,12 @@ type UnionPartial<TColumns, TPath extends string, TKey extends string, TTags, TE
  * {@link NestEmbeddedPartial}. A `taggedUnion()` is given as one whole variant: its tag, and any of that
  * variant's columns.
  */
-export type NestModelPartial<TColumns extends Columns, TExtra> = [UnionTagKeys<TColumns>] extends [never]
+export type NestModelPartial<TColumns extends Columns, TExtra> = [UnionMemberKeys<TColumns>] extends [never]
 	? NestEmbeddedPartial<{ [K in keyof TColumns & string]?: GetColumnData<TColumns[K]> | TExtra }>
 	: OuterUnionTagKeys<TColumns> extends infer TTagKeys extends string ? NestEmbeddedPartial<
 			& {
 				[K in Exclude<keyof TColumns & string, `${ParentPath<TTagKeys>}.${string}`>]?:
-					| GetColumnData<TColumns[K]>
+					| EmbeddedColumnData<TColumns[K]>
 					| TExtra;
 			}
 			& {
@@ -1213,6 +1437,21 @@ export type NestModelPartial<TColumns extends Columns, TExtra> = [UnionTagKeys<T
 			}
 		>
 	: never;
+
+/** The markers a column builder's config carries into the built column's config. */
+export type UnionColumnMarkers<T> = Pick<T, Extract<keyof T, 'unionTag' | 'unionMember' | 'unionShared'>>;
+
+/**
+ * A column of a union variant: nullable in the database, with its declared nullability kept for
+ * the rows of its own variant.
+ */
+type MarkUnionMember<TBuilder> = TBuilder extends { _: infer TConfig } ? {
+		_: Simplify<
+			& Omit<TConfig, 'notNull'>
+			& { notNull: false; unionMember: { notNull: TConfig extends { notNull: true } ? true : false } }
+		>;
+	}
+	: TBuilder;
 
 /** Whether a flat column map holds any `taggedUnion()`. */
 export type HasEmbeddedUnions<TColumns> = [UnionTagKeys<TColumns>] extends [never] ? false : true;

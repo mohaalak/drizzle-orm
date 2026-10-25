@@ -1,6 +1,6 @@
 import type { ChangeColumnTableName, ColumnType, Dialect } from '~/column-builder.ts';
 import type { AnyColumn, Column, ColumnBaseConfig, GetColumnData, UpdateColConfig } from '~/column.ts';
-import type { EmbeddedUnionTagKey, NestEmbedded } from '~/embed.ts';
+import type { EmbeddedColumnData, EmbeddedUnionTagKey, NestEmbedded, UnionSharedColumnData } from '~/embed.ts';
 import type { SelectedFields } from '~/operations.ts';
 import type { ColumnsSelection, SQL } from '~/sql/sql.ts';
 import type { Subquery } from '~/subquery.ts';
@@ -208,8 +208,23 @@ export type SelectResultField<T, TDeep extends boolean = true> = T extends Drizz
  * A selected `taggedUnion()` group: one object per variant, holding the tag and that variant's columns.
  */
 type SelectUnionResult<T extends Record<string, any>, TKey extends keyof T & string, TTags = GetColumnData<T[TKey]>> =
-	TTags extends string ? Simplify<{ [K in TKey]: TTags } & (TTags extends keyof T ? SelectResultFields<T[TTags]> : {})>
+	TTags extends string ? Simplify<
+			& { [K in TKey]: TTags }
+			& (TTags extends keyof T ? SelectUnionVariantResult<T[TTags]> : {})
+			& {
+				[K in keyof T as T[K] extends { _: { unionShared: { [P in TTags]: boolean } } } ? K : never]:
+					UnionSharedColumnData<T[K], TTags>;
+			}
+		>
 		: never;
+
+/** A variant's columns, read as the variant declares them rather than as the database stores them. */
+type SelectUnionVariantResult<T> = {
+	[K in keyof T]: T[K] extends Column<any> ? EmbeddedColumnData<T[K]>
+		: T[K] extends Record<string, any> ? [EmbeddedUnionTagKey<T[K]>] extends [never] ? SelectUnionVariantResult<T[K]>
+			: SelectUnionResult<T[K], EmbeddedUnionTagKey<T[K]>>
+		: never;
+};
 
 export type SelectResultFields<TSelectedFields, TDeep extends boolean = true> = Simplify<
 	{
