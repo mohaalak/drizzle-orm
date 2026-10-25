@@ -82,28 +82,31 @@ type CanCoerce<
 
 type HandleSelectColumn<
 	TSchema extends z.ZodType,
-	TColumn extends Column,
-> = TColumn['_']['notNull'] extends true ? TSchema
+	TNotNull,
+> = TNotNull extends true ? TSchema
 	: z.ZodNullable<TSchema>;
 
 type HandleInsertColumn<
 	TSchema extends z.ZodType,
 	TColumn extends Column,
-> = TColumn['_']['notNull'] extends true ? TColumn['_']['hasDefault'] extends true ? z.ZodOptional<TSchema>
+	TNotNull,
+> = TNotNull extends true ? TColumn['_']['hasDefault'] extends true ? z.ZodOptional<TSchema>
 	: TSchema
 	: z.ZodOptional<z.ZodNullable<TSchema>>;
 
 type HandleUpdateColumn<
 	TSchema extends z.ZodType,
-	TColumn extends Column,
-> = TColumn['_']['notNull'] extends true ? z.ZodOptional<TSchema>
+	TNotNull,
+> = TNotNull extends true ? z.ZodOptional<TSchema>
 	: z.ZodOptional<z.ZodNullable<TSchema>>;
 
+/** @param TNotNull whether the column is `NOT NULL`; a `taggedUnion()` variant's column passes its declared nullability */
 export type HandleColumn<
 	TType extends 'select' | 'insert' | 'update',
 	TColumn extends Column,
 	TCoerce extends CoerceOptions,
-> = TType extends 'select' ? HandleSelectColumn<GetZodType<TColumn, TCoerce>, TColumn>
-	: TType extends 'insert' ? HandleInsertColumn<GetZodType<TColumn, TCoerce>, TColumn>
-	: TType extends 'update' ? HandleUpdateColumn<GetZodType<TColumn, TCoerce>, TColumn>
+	TNotNull = TColumn['_']['notNull'],
+> = TType extends 'select' ? HandleSelectColumn<GetZodType<TColumn, TCoerce>, TNotNull>
+	: TType extends 'insert' ? HandleInsertColumn<GetZodType<TColumn, TCoerce>, TColumn, TNotNull>
+	: TType extends 'update' ? HandleUpdateColumn<GetZodType<TColumn, TCoerce>, TNotNull>
 	: GetZodType<TColumn, TCoerce>;

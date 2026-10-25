@@ -41,7 +41,7 @@ import { filterSqliteTables, resetSqlite, seedSqlite } from './sqlite-core/index
 import type { DrizzleStudioObjectType, DrizzleStudioRelationType } from './types/drizzleStudio.ts';
 import type { DbType, RefinementsType, SeedOperation } from './types/seedService.ts';
 import type { Relation, SeedRelations, Table } from './types/tables.ts';
-import { nestEmbeddedRow } from './utils.ts';
+import { getTableUnions, nestEmbeddedRow } from './utils.ts';
 
 type SchemaValuesType =
 	| PgTable
@@ -179,7 +179,7 @@ class SeedDryRun<TResult, TChunk> implements Promise<TResult>, AsyncIterable<TCh
 		private collect: (chunks: TChunk[], plan: SeedPlan) => TResult,
 		// how a chunk is handed to someone iterating. Collecting works on the chunks as they were generated, since the
 		// second pass over cyclic tables finds its rows by the generated column names
-		private present: (chunk: TChunk) => TChunk = (chunk) => chunk,
+		private present: (chunk: TChunk, plan: SeedPlan) => TChunk = (chunk) => chunk,
 	) {}
 
 	private async collectAll(): Promise<TResult> {
@@ -218,7 +218,8 @@ class SeedDryRun<TResult, TChunk> implements Promise<TResult>, AsyncIterable<TCh
 	}
 
 	async *[Symbol.asyncIterator](): AsyncIterator<TChunk> {
-		for (const chunk of this.chunksOf(await this.buildPlan())) yield this.present(chunk);
+		const plan = await this.buildPlan();
+		for (const chunk of this.chunksOf(plan)) yield this.present(chunk, plan);
 	}
 }
 
@@ -357,13 +358,19 @@ class SeedPromise<
 				Object.fromEntries(
 					[...new SeedService().collectSeedRows(chunks as unknown as SeedOperation[], Object.keys(plan.tables))].map((
 						[tableName, rows],
-					) => [tableName, rows.map(nestEmbeddedRow)]),
+					) => {
+						const unions = getTableUnions(plan.tables[tableName] as object);
+						return [tableName, rows.map((row) => nestEmbeddedRow(row, unions))];
+					}),
 				) as DryRunResult<SCHEMA>,
 			// an `embed()` group is generated under dotted column names but handed back nested, as the table writes it
-			(chunk) =>
-				chunk.type === 'insert'
-					? { ...chunk, rows: (chunk.rows as {}[]).map(nestEmbeddedRow) } as typeof chunk
-					: { ...chunk, values: nestEmbeddedRow(chunk.values as {}) } as typeof chunk,
+			(chunk, plan) => {
+				const unions = getTableUnions(plan.tables[chunk.tableName as string] as object);
+
+				return chunk.type === 'insert'
+					? { ...chunk, rows: (chunk.rows as {}[]).map((row) => nestEmbeddedRow(row, unions)) } as typeof chunk
+					: { ...chunk, values: nestEmbeddedRow(chunk.values as {}, unions) } as typeof chunk;
+			},
 		);
 	}
 }

@@ -20,7 +20,7 @@ import type {
 	Table,
 	TableConfigT,
 } from './types/tables.ts';
-import { getFlatColumns, isRelationCyclic } from './utils.ts';
+import { getFlatColumns, getTableUnions, isRelationCyclic } from './utils.ts';
 
 const getTableConfig = (
 	table: DrizzleTable,
@@ -213,6 +213,8 @@ export const getSchemaInfo = (
 			),
 			columns: mapColumns(tableConfig.columns, dbToTsColumnNamesMap),
 		};
+		const unions = getTableUnions(table);
+		if (unions !== undefined) mappedTable.unions = unions;
 		tables.push(mappedTable);
 	}
 

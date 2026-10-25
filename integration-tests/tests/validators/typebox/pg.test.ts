@@ -11,6 +11,7 @@ import {
 	pgTable,
 	pgView,
 	serial,
+	taggedUnion,
 	text,
 } from 'drizzle-orm/pg-core';
 import {
@@ -204,6 +205,194 @@ test('embedded columns - refine', (tc) => {
 
 	// @ts-expect-error - unknown key in a group
 	createInsertSchema(embedTable, { address: { country: t.String() } });
+});
+
+const unionTable = pgTable('test', {
+	id: serial().primaryKey(),
+	name: text().notNull(),
+	uploader: taggedUnion('kind', text(), {
+		staff: { staffId: integer().notNull(), note: text(), campusId: integer().notNull() },
+		parent: {
+			parentId: integer().notNull(),
+			campusId: integer(),
+			via: taggedUnion('channel', text(), {
+				app: { version: text().notNull() },
+				email: { address: text().notNull() },
+			}),
+		},
+		system: {},
+	}),
+	meta: embed({ label: text() }),
+});
+
+type ViaUpdate = { channel: 'app'; version?: string } | { channel: 'email'; address?: string };
+
+test('tagged union - select', (tc) => {
+	const result = createSelectSchema(unionTable);
+	expect(Object.keys(result.properties)).toStrictEqual(['id', 'name', 'uploader', 'meta']);
+	expectSchemaShape(tc, t.Object({ meta: t.Object({ label: textNullableSchema }) })).from(
+		t.Object({ meta: result.properties.meta }) as any,
+	);
+	Expect<Equal<Static<typeof result>, typeof unionTable.$inferSelect>>();
+
+	const staff = { kind: 'staff', staffId: 1, note: null, campusId: 2 };
+	const parent = { kind: 'parent', parentId: 1, campusId: null, via: { channel: 'app', version: '1' } };
+	const system = { kind: 'system' };
+	for (const uploader of [staff, parent, system]) {
+		const row = { id: 1, name: 'a', uploader, meta: { label: null } };
+		expect(Value.Check(result, row)).toBe(true);
+		expect(Value.Parse(result, row)).toStrictEqual(row);
+	}
+	const row = (uploader: unknown) => ({ id: 1, name: 'a', uploader, meta: { label: null } });
+	// an unknown tag
+	expect(Value.Check(result, row({ kind: 'robot' }))).toBe(false);
+	// a missing tag
+	expect(Value.Check(result, row({ staffId: 1, note: null, campusId: 2 }))).toBe(false);
+	// a missing required field of the variant
+	expect(Value.Check(result, row({ kind: 'staff', note: null, campusId: 2 }))).toBe(false);
+	expect(Value.Check(result, row({ kind: 'staff', staffId: 1, note: null }))).toBe(false);
+	// a field of another variant in place of the variant's own
+	expect(Value.Check(result, row({ kind: 'staff', parentId: 1, note: null, campusId: 2 }))).toBe(false);
+	expect(Value.Check(result, row({ kind: 'parent', staffId: 1, campusId: null, via: parent.via }))).toBe(false);
+	// a field of another variant beside the variant's own
+	expect(Value.Check(result, row({ kind: 'system', staffId: 1 }))).toBe(false);
+	// a declared-nullable column is nullable, a declared-NOT NULL one is not, though both are shared
+	expect(Value.Check(result, row({ ...staff, campusId: null }))).toBe(false);
+	expect(Value.Check(result, row({ ...parent, campusId: null }))).toBe(true);
+	// the union nested in a variant is a union of its own
+	expect(Value.Check(result, row({ ...parent, via: { channel: 'email', address: 'a' } }))).toBe(true);
+	expect(Value.Check(result, row({ ...parent, via: { channel: 'sms' } }))).toBe(false);
+	expect(Value.Check(result, row({ ...parent, via: { channel: 'app', address: 'a' } }))).toBe(false);
+	// the flat, dotted columns are not a row
+	expect(Value.Check(result, { id: 1, name: 'a', 'uploader.kind': 'system' })).toBe(false);
+});
+
+test('tagged union - insert', () => {
+	const result = createInsertSchema(unionTable);
+	Expect<Equal<Static<typeof result>, typeof unionTable.$inferInsert>>();
+
+	const insert = (uploader: unknown, rest: object = { name: 'a' }) => ({ ...rest, uploader });
+	expect(Value.Check(result, insert({ kind: 'system' }))).toBe(true);
+	expect(Value.Check(result, insert({ kind: 'staff', staffId: 1, campusId: 2 }))).toBe(true);
+	expect(Value.Check(result, insert({ kind: 'staff', staffId: 1, campusId: 2, note: 'n' }))).toBe(true);
+	expect(Value.Check(result, insert({ kind: 'staff', staffId: 1, campusId: 2, note: null }))).toBe(true);
+	expect(Value.Check(result, insert({ kind: 'parent', parentId: 1, via: { channel: 'email', address: 'a' } }))).toBe(
+		true,
+	);
+	expect(
+		Value.Check(result, insert({ kind: 'parent', parentId: 1, campusId: null, via: { channel: 'app', version: '1' } })),
+	)
+		.toBe(true);
+	// the tag is required
+	expect(Value.Check(result, insert({ staffId: 1, campusId: 2 }))).toBe(false);
+	expect(Value.Check(result, insert({}))).toBe(false);
+	// so is the union
+	expect(Value.Check(result, { name: 'a' })).toBe(false);
+	expect(Value.Check(result, insert({ kind: 'robot' }))).toBe(false);
+	// a variant's NOT NULL columns are required, including the ones it shares
+	expect(Value.Check(result, insert({ kind: 'staff', campusId: 2 }))).toBe(false);
+	expect(Value.Check(result, insert({ kind: 'staff', staffId: 1 }))).toBe(false);
+	expect(Value.Check(result, insert({ kind: 'parent', via: { channel: 'app', version: '1' } }))).toBe(false);
+	expect(Value.Check(result, insert({ kind: 'staff', staffId: 1, campusId: null }))).toBe(false);
+	expect(Value.Check(result, insert({ kind: 'staff', parentId: 1, campusId: 2 }))).toBe(false);
+	expect(Value.Check(result, insert({ kind: 'parent', parentId: 1 }))).toBe(false);
+});
+
+test('tagged union - update', () => {
+	const result = createUpdateSchema(unionTable);
+	type Update = Static<typeof result>;
+	Expect<
+		Equal<
+			Update['uploader'],
+			| { kind: 'staff'; staffId?: number; note?: string | null; campusId?: number }
+			| { kind: 'parent'; parentId?: number; campusId?: number | null; via?: ViaUpdate }
+			| { kind: 'system' }
+			| undefined
+		>
+	>();
+
+	const update = (uploader: unknown) => ({ uploader });
+	expect(Value.Check(result, {})).toBe(true);
+	expect(Value.Check(result, update({ kind: 'system' }))).toBe(true);
+	expect(Value.Check(result, update({ kind: 'staff' }))).toBe(true);
+	expect(Value.Check(result, update({ kind: 'staff', note: null }))).toBe(true);
+	expect(Value.Check(result, update({ kind: 'parent', via: { channel: 'app', version: '1' } }))).toBe(true);
+	// the tag picks the variant being written
+	expect(Value.Check(result, update({ note: 'n' }))).toBe(false);
+	expect(Value.Check(result, update({ kind: 'robot' }))).toBe(false);
+	// a union cannot be cleared
+	expect(Value.Check(result, update(null))).toBe(false);
+	// the fields of the variant keep their types, and a nested union is written as one of its variants
+	expect(Value.Check(result, update({ kind: 'staff', staffId: 'x' }))).toBe(false);
+	expect(Value.Check(result, update({ kind: 'staff', campusId: null }))).toBe(false);
+	expect(Value.Check(result, update({ kind: 'parent', via: { channel: 'app' } }))).toBe(true);
+	expect(Value.Check(result, update({ kind: 'parent', via: { channel: 'sms' } }))).toBe(false);
+	expect(Value.Check(result, update({ kind: 'parent', via: {} }))).toBe(false);
+	expect(Value.Check(result, update({ kind: 'staff', parentId: 1, staffId: 'x' }))).toBe(false);
+});
+
+test('tagged union - refine', () => {
+	const result = createInsertSchema(unionTable, {
+		name: (schema) => t.String({ minLength: 2 }),
+		uploader: {
+			// shared by staff and parent
+			campusId: t.Integer({ minimum: 1 }),
+			staff: { staffId: (schema) => t.Integer({ minimum: 10 }) },
+			parent: { via: { app: { version: t.String({ minLength: 3 }) } } },
+		},
+	});
+
+	const insert = (uploader: unknown, name = 'ab') => ({ name, uploader });
+	expect(Value.Check(result, insert({ kind: 'staff', staffId: 10, campusId: 1 }))).toBe(true);
+	expect(Value.Check(result, insert({ kind: 'staff', staffId: 9, campusId: 1 }))).toBe(false);
+	expect(Value.Check(result, insert({ kind: 'staff', staffId: 10, campusId: 0 }))).toBe(false);
+	expect(
+		Value.Check(result, insert({ kind: 'parent', parentId: 0, campusId: 1, via: { channel: 'email', address: 'a' } })),
+	)
+		.toBe(true);
+	expect(
+		Value.Check(result, insert({ kind: 'parent', parentId: 0, campusId: 0, via: { channel: 'email', address: 'a' } })),
+	)
+		.toBe(false);
+	expect(
+		Value.Check(result, insert({ kind: 'parent', parentId: 0, campusId: 1, via: { channel: 'app', version: 'v1' } })),
+	)
+		.toBe(false);
+	expect(
+		Value.Check(result, insert({ kind: 'parent', parentId: 0, campusId: 1, via: { channel: 'app', version: 'v1.0' } })),
+	)
+		.toBe(true);
+	expect(Value.Check(result, insert({ kind: 'system' }, 'a'))).toBe(false);
+	expect(Value.Check(result, insert({ kind: 'system' }))).toBe(true);
+
+	// the tag is not refined
+	const tagged = createInsertSchema(unionTable, { uploader: { kind: t.Literal('other') } } as any);
+	expect(Value.Check(tagged, insert({ kind: 'system' }))).toBe(true);
+	expect(Value.Check(tagged, insert({ kind: 'other' }))).toBe(false);
+
+	// A plain column of a table with a union is refined as usual, and the refinements are optional
+	const typed = createInsertSchema(unionTable, { name: (schema) => t.String({ minLength: 2 }) });
+	expect(Value.Check(typed, insert({ kind: 'system' }, 'a'))).toBe(false);
+	createInsertSchema(unionTable, {
+		uploader: { campusId: t.Integer({ minimum: 1 }), staff: { staffId: t.Integer({ minimum: 10 }) } },
+	});
+	// @ts-expect-error - unknown key in a table with a union
+	createInsertSchema(unionTable, { nope: t.String() });
+});
+
+test('tagged union - view qb', () => {
+	const view = pgView('test').as((qb) =>
+		qb.select({ id: unionTable.id, uploader: unionTable.uploader, staffId: unionTable.uploader.staff.staffId }).from(
+			unionTable,
+		)
+	);
+	const result = createSelectSchema(view);
+	type Uploader = typeof unionTable.$inferSelect['uploader'];
+	// outside of its union a variant's column is nullable, as the database stores it
+	Expect<Equal<Static<typeof result>, { id: number; uploader: Uploader; staffId: number | null }>>();
+
+	expect(Value.Check(result, { id: 1, uploader: { kind: 'system' }, staffId: null })).toBe(true);
+	expect(Value.Check(result, { id: 1, uploader: { kind: 'robot' }, staffId: null })).toBe(false);
 });
 
 test('view qb - select', (tc) => {

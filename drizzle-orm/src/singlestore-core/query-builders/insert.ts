@@ -1,4 +1,10 @@
-import { expandInsertColumnList, flattenEmbeddedValues, type NestEmbedded } from '~/embed.ts';
+import {
+	expandInsertColumnList,
+	flattenEmbeddedValues,
+	type HasEmbeddedUnions,
+	type NestEmbedded,
+	type NestModel,
+} from '~/embed.ts';
 import { entityKind, is } from '~/entity.ts';
 import { QueryPromise } from '~/query-promise.ts';
 import type { RunnableQuery } from '~/runnable-query.ts';
@@ -39,14 +45,21 @@ export type SingleStoreInsertValue<
 	TColumnsList extends string[] | 'all' = 'all',
 	TModel extends Record<string, any> = InferInsertColumns<TTable>,
 > =
-	& NestEmbedded<
-		{
-			[K in keyof TModel as TColumnsList extends 'all' ? K : Extract<K, TColumnsList[number]>]:
-				| TModel[K]
-				| SQL
-				| Placeholder;
-		}
-	>
+	& (HasEmbeddedUnions<TTable['_']['columns']> extends true ? NestModel<
+			TColumnsList extends 'all' ? TTable['_']['columns']
+				: Pick<TTable['_']['columns'], Extract<keyof TTable['_']['columns'], TColumnsList[number]>>,
+			'insert',
+			{ override: false },
+			SQL | Placeholder
+		>
+		: NestEmbedded<
+			{
+				[K in keyof TModel as TColumnsList extends 'all' ? K : Extract<K, TColumnsList[number]>]:
+					| TModel[K]
+					| SQL
+					| Placeholder;
+			}
+		>)
 	& {};
 
 export type NoDuplicateColumns<

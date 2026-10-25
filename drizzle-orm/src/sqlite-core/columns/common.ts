@@ -6,11 +6,12 @@ import type {
 	ColumnBuilderRuntimeConfig,
 	ColumnType,
 	HasGenerated,
+	MakeColumnConfig,
 } from '~/column-builder.ts';
 import { ColumnBuilder } from '~/column-builder.ts';
 import { Column } from '~/column.ts';
 import type { ColumnBaseConfig } from '~/column.ts';
-import type { EmbedBuilder, FlattenEmbedBuilders } from '~/embed.ts';
+import type { EmbedBuilder, FlattenEmbedBuilders, UnionColumnMarkers } from '~/embed.ts';
 import { entityKind } from '~/entity.ts';
 import type { SQL } from '~/sql/sql.ts';
 import type { SQLiteType } from '~/sqlite-core/codecs.ts';
@@ -134,6 +135,16 @@ type SQLiteBuildFlatColumns<
 	TConfigMap,
 > =
 	& {
-		[Key in keyof TConfigMap]: BuildColumn<TTableName, Assume<TConfigMap[Key], ColumnBuilderBase>, 'sqlite'>;
+		[Key in keyof TConfigMap]: BuildColumn<
+			TTableName,
+			Assume<TConfigMap[Key], ColumnBuilderBase>,
+			'sqlite',
+			SQLiteBuiltColumnConfig<TTableName, Assume<TConfigMap[Key], ColumnBuilderBase>>
+		>;
 	}
 	& {};
+
+// Like a plain built column's config, carrying the markers `taggedUnion()` puts on its columns.
+type SQLiteBuiltColumnConfig<TTableName extends string, TBuilder extends ColumnBuilderBase> =
+	& MakeColumnConfig<TBuilder['_'], TTableName, 'sqlite'>
+	& UnionColumnMarkers<TBuilder['_']>;
