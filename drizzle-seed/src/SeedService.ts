@@ -29,7 +29,7 @@ import type {
 	TableGeneratorsType,
 	TableType,
 } from './types/seedService.ts';
-import type { Prettify, Relation, Table } from './types/tables.ts';
+import type { Prettify, Relation, Table, TableUnions } from './types/tables.ts';
 
 import type { CockroachTable } from 'drizzle-orm/cockroach-core';
 import { CockroachDatabase } from 'drizzle-orm/cockroach-core';
@@ -45,9 +45,11 @@ import { selectGeneratorForPostgresColumn } from './pg-core/selectGensForColumn.
 import { selectGeneratorForSingleStoreColumn } from './singlestore-core/selectGensForColumn.ts';
 import { selectGeneratorForSqlite } from './sqlite-core/selectGensForColumn.ts';
 import {
+	applyTableUnions,
 	equalSets,
 	flattenRefinementColumns,
 	getFlatColumns,
+	getTableUnions,
 	intMax,
 	isSequenceBackedColumn,
 	nestEmbeddedRow,
@@ -130,6 +132,7 @@ export class SeedService {
 			tableName: table.name,
 			columnsPossibleGenerators: [],
 			withFromTable: {},
+			unions: table.unions,
 		}));
 
 		for (const [i, table] of tables.entries()) {
@@ -266,7 +269,9 @@ export class SeedService {
 				) {
 					const genObj = refinements[table.name]!.columns[col.name]!;
 					if (genObj === false) {
-						if (col.notNull === true && col.hasDefault === false) {
+						// a variant's column is nullable on the table, but not in the rows of the variant that declares it
+						const declaredNotNull = col.notNull === true || table.unions?.columns[col.name]?.declaredNotNull === true;
+						if (declaredNotNull && col.hasDefault === false) {
 							throw new Error(
 								`You cannot set the '${col.name}' column in the '${table.name}' table to false in your refinements.`
 									+ `\nDoing so will result in a null value being inserted into the '${col.name}' column,`
@@ -346,7 +351,12 @@ export class SeedService {
 						} else columnPossibleGenerator.generator = new generatorsMap.GenerateValuesFromArray[0]();
 					}
 				} // TODO: rewrite pickGeneratorFor... using new col properties: isUnique and notNull
-				else if (connectionType === 'postgresql') {
+				else if (table.unions?.tags[col.name] !== undefined) {
+					// the tag column of a `taggedUnion()` takes the names of its variants, a random one for each row
+					columnPossibleGenerator.generator = new generatorsMap.GenerateValuesFromArray[0]({
+						values: table.unions.tags[col.name]!,
+					});
+				} else if (connectionType === 'postgresql') {
 					columnPossibleGenerator.generator = selectGeneratorForPostgresColumn(
 						col,
 						table.primaryKeys.includes(col.name),
@@ -696,9 +706,23 @@ export class SeedService {
 			}
 			tablesUniqueNotNullColumn[tableGen.tableName] = { uniqueNotNullColName };
 
+			// a union is written as one variant, and a column is only filled for the variant that has it, so the tag
+			// columns that say which one a row holds are generated again (to the same values) next to the cyclic columns
+			const cyclicColumns = tableGen.columnsPossibleGenerators.filter((colGen) =>
+				colGen.isCyclic === true && colGen.wasDefinedBefore === true
+			);
+			const tagColumns = new Set(
+				cyclicColumns.flatMap((colGen) =>
+					tableGen.unions?.columns[colGen.columnName]?.levels.map((level) => level.tag) ?? []
+				),
+			);
+
 			filteredTablesGenerators[idx]!.columnsPossibleGenerators = tableGen.columnsPossibleGenerators.filter((
 				colGen,
-			) => (colGen.isCyclic === true && colGen.wasDefinedBefore === true) || colGen.columnName === uniqueNotNullColName)
+			) =>
+				(colGen.isCyclic === true && colGen.wasDefinedBefore === true) || colGen.columnName === uniqueNotNullColName
+				|| tagColumns.has(colGen.columnName)
+			)
 				.map((colGen) => {
 					const newColGen = { ...colGen };
 					newColGen.wasDefinedBefore = false;
@@ -972,13 +996,14 @@ export class SeedService {
 					batchSize,
 					trackedColumns,
 					maxTrackedValues: maxSequenceValues,
+					unions: table.unions,
+					tableName: table.tableName,
 				})
 			) {
 				if (isUpdatePass) {
 					for (const row of batch) {
 						const values = { ...row };
 						delete values[uniqueNotNullColName as string];
-
 						yield {
 							type: 'update',
 							tableName: table.tableName,
@@ -1025,8 +1050,10 @@ export class SeedService {
 	}
 
 	private *generateRowBatches(
-		{ tableGenerators, count, batchSize, trackedColumns, maxTrackedValues }: {
+		{ tableGenerators, count, batchSize, trackedColumns, maxTrackedValues, unions, tableName }: {
 			tableGenerators: Prettify<TableGeneratorsType>;
+			unions?: TableUnions;
+			tableName?: string;
 			count?: number;
 			batchSize: number;
 			trackedColumns?: Set<string>;
@@ -1064,6 +1091,8 @@ export class SeedService {
 					);
 				}
 			}
+
+			if (unions !== undefined) applyTableUnions(row, unions, tableName!);
 
 			batch.push(row);
 
@@ -1189,7 +1218,8 @@ export class SeedService {
 		},
 	): SeedQuery => {
 		// an `embed()` group is written as a nested object, while the seed generates its columns under dotted keys
-		const nestedRows = rows.map(nestEmbeddedRow);
+		const unions = getTableUnions(schema[tableName] as object);
+		const nestedRows = rows.map((row) => nestEmbeddedRow(row, unions));
 
 		if (is(db, PgAsyncDatabase<any>)) {
 			const query = db.insert((schema as { [key: string]: PgTable })[tableName]!);
@@ -1241,7 +1271,7 @@ export class SeedService {
 		// the column map is flat, an `embed()` group's columns are only nested on the table object itself
 		const whereTableColumn = getFlatColumns(table)[whereColumn]!;
 
-		return (db as PgAsyncDatabase<any>).update(table).set(nestEmbeddedRow(values)).where(
+		return (db as PgAsyncDatabase<any>).update(table).set(nestEmbeddedRow(values, getTableUnions(table))).where(
 			eq(whereTableColumn, whereValue),
 		);
 	};

@@ -344,6 +344,11 @@ export interface EmbeddedUnionInfo {
 export interface EmbeddedUnionMembership {
 	readonly union: EmbeddedUnionInfo;
 	readonly path: readonly string[];
+	/**
+	 * Whether the column was declared `NOT NULL`. At runtime a variant's columns are all nullable, since other
+	 * variants' rows leave them empty, so this is what says the column must be filled in a row of its own variant.
+	 */
+	readonly notNull: boolean;
 }
 
 /**
@@ -419,9 +424,13 @@ export function flattenEmbedBuilders<TBuilder extends ColumnBuilderBase>(
 
 function markUnionMember(builder: ColumnBuilderBase, path: string, unions: readonly ActiveUnion[], inVariant: boolean) {
 	const config = (builder as unknown as { config: Record<string, any> }).config;
+	// read before it is forced to false below, and kept if the builder has been flattened before
+	const declaredNotNull: boolean = (config['embeddedUnions'] as EmbeddedUnionMembership[] | undefined)?.[0]?.notNull
+		?? config['notNull'] === true;
 	config['embeddedUnions'] = unions.map((union): EmbeddedUnionMembership => ({
 		union: union.info,
 		path: path.slice(union.root.length).split(EmbeddedKeySeparator),
+		notNull: declaredNotNull,
 	}));
 
 	const innermost = unions.at(-1)!;
