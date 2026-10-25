@@ -2,9 +2,11 @@ import {
 	expandInsertColumnList,
 	flattenEmbeddedValues,
 	flattenSelectedFields,
+	type HasEmbeddedUnions,
 	type InsertSelectionShape,
 	type ListedInsertColumns,
 	type NestEmbedded,
+	type NestModel,
 	type ValidateNestedInsertSelection,
 } from '~/embed.ts';
 import { entityKind, is } from '~/entity.ts';
@@ -41,14 +43,21 @@ export type MySqlInsertValue<
 	TColumnsList extends string[] | 'all' = 'all',
 	TModel extends Record<string, any> = InferInsertColumns<TTable>,
 > =
-	& NestEmbedded<
-		{
-			[K in keyof TModel as TColumnsList extends 'all' ? K : Extract<K, TColumnsList[number]>]:
-				| TModel[K]
-				| SQL
-				| Placeholder;
-		}
-	>
+	& (HasEmbeddedUnions<TTable['_']['columns']> extends true ? NestModel<
+			TColumnsList extends 'all' ? TTable['_']['columns']
+				: Pick<TTable['_']['columns'], Extract<keyof TTable['_']['columns'], TColumnsList[number]>>,
+			'insert',
+			{ override: false },
+			SQL | Placeholder
+		>
+		: NestEmbedded<
+			{
+				[K in keyof TModel as TColumnsList extends 'all' ? K : Extract<K, TColumnsList[number]>]:
+					| TModel[K]
+					| SQL
+					| Placeholder;
+			}
+		>)
 	& {};
 
 export type MySqlInsertSelection<
