@@ -302,6 +302,9 @@ function sharedColumn(
 		}
 	}
 
+	(firstConfig as { unionShared?: Record<string, boolean> }).unionShared = Object.fromEntries(
+		declarations.map(([variant, builder]) => [variant, configOf(builder).notNull]),
+	);
 	firstConfig.notNull = declarations.length === tags.length
 		&& declarations.every(([, builder]) => configOf(builder).notNull);
 	return first;
@@ -412,17 +415,35 @@ function markUnionMember(builder: ColumnBuilderBase, path: string, unions: reado
 		path: path.slice(union.root.length).split(EmbeddedKeySeparator),
 	}));
 
+	const innermost = unions.at(-1)!;
+	const isTag = path === innermost.root + innermost.info.key;
+
 	if (inVariant) {
 		// Another variant's rows leave this column empty.
 		if (config['primaryKey']) {
 			throw new Error(`Column "${path}" is in a union variant, so it cannot be a primary key`);
 		}
+		// Kept for the rows of its own variant; a nested union's tag column is always declared NOT NULL.
+		config['unionNotNull'] = isTag || !!config['notNull'];
 		config['notNull'] = false;
 		return;
 	}
 
-	const innermost = unions.at(-1)!;
-	if (path === innermost.root + innermost.info.key) config['notNull'] = true;
+	if (isTag) config['notNull'] = true;
+}
+
+/**
+ * Whether a `taggedUnion()` column is `NOT NULL` in the rows of variant `variant`, as declared: a
+ * variant's column is nullable in the database, and a shared column is `NOT NULL` there only when
+ * every variant declares it so. Columns outside a union give their own `notNull`.
+ *
+ * @internal
+ */
+export function declaredUnionNotNull(column: Column, variant: string): boolean {
+	const config = (column as unknown as {
+		config: { notNull?: boolean; unionNotNull?: boolean; unionShared?: Record<string, boolean> };
+	}).config;
+	return config.unionShared?.[variant] ?? config.unionNotNull ?? column.notNull;
 }
 
 function assertUniqueUnionColumnNames(builders: Record<string, ColumnBuilderBase>) {

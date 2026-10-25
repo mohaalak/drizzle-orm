@@ -1,6 +1,7 @@
 import { IsOptional, Type as t } from 'typebox';
 import type { TObject, TSchema } from 'typebox';
 import { Column } from '~/column.ts';
+import { unionVariantShapes } from '~/embed-validators.ts';
 import { EmbeddedColumns, getTableShape } from '~/embed.ts';
 import { is } from '~/entity.ts';
 import type { PgEnum } from '~/pg-core/columns/enum.ts';
@@ -27,6 +28,12 @@ export function handleColumns(
 	const columnSchemas: Record<string, TSchema> = {};
 
 	for (const [key, selected] of Object.entries(columns)) {
+		const union = is(selected, EmbeddedColumns) ? unionVariantShapes(selected) : undefined;
+		if (union) {
+			columnSchemas[key] = handleUnion(union, refinements[key] ?? {}, conditions, factory);
+			continue;
+		}
+
 		if (!is(selected, Column) && !is(selected, SQL) && !is(selected, SQL.Aliased) && typeof selected === 'object') {
 			const columns = isTable(selected) ? getTableShape(selected) : isView(selected) ? getColumns(selected) : selected;
 			const nested = handleColumns(columns, refinements[key] ?? {}, conditions, factory);
@@ -64,6 +71,26 @@ export function handleColumns(
 	return t.Object(columnSchemas) as any;
 }
 
+/**
+ * A `taggedUnion()` group is a union of one object per variant, told apart by the tag's literal. Refinements
+ * of the group name a shared column's key, which refines it in every variant that declares it, or a variant's
+ * name, which holds refinements of that variant's columns. The tag column is not refined.
+ */
+function handleUnion(
+	{ key, variants }: NonNullable<ReturnType<typeof unionVariantShapes>>,
+	refinements: Record<string, any>,
+	conditions: Conditions,
+	factory?: CreateSchemaFactoryOptions,
+): TSchema {
+	const tags = variants.map(({ tag }) => tag);
+	const shared = Object.fromEntries(Object.entries(refinements).filter(([field]) => !tags.includes(field)));
+	const schemas = variants.map(({ tag, shape }) => {
+		const { properties } = handleColumns(shape, { ...shared, ...refinements[tag] }, conditions, factory) as TObject;
+		return t.Object({ [key]: t.Literal(tag), ...properties });
+	});
+	return conditions.union(t.Union(schemas));
+}
+
 export function handleEnum(enum_: PgEnum<any>, factory?: CreateSchemaFactoryOptions) {
 	const typebox: typeof t = factory?.typeboxInstance ?? t;
 	return typebox.Enum(mapEnumValues(enum_.enumValues));
@@ -74,6 +101,7 @@ const selectConditions: Conditions = {
 	optional: () => false,
 	nullable: (column) => !column.notNull,
 	group: (schema) => schema,
+	union: (schema) => schema,
 };
 
 const insertConditions: Conditions = {
@@ -87,6 +115,8 @@ const insertConditions: Conditions = {
 		Object.values((schema as TObject).properties).every((field) => IsOptional(field))
 			? t.Optional(schema)
 			: schema,
+	// The tag is always written
+	union: (schema) => schema,
 };
 
 const updateConditions: Conditions = {
@@ -97,6 +127,8 @@ const updateConditions: Conditions = {
 	nullable: (column) => !column.notNull,
 	// Writing `null` to a group clears every column in it
 	group: (schema) => t.Optional(t.Union([schema, t.Null()])),
+	// A union is written whole as one variant, and cannot be cleared
+	union: (schema) => t.Optional(schema),
 };
 
 export const createSelectSchema: CreateSelectSchema = (
