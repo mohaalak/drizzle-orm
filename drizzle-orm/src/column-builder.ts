@@ -465,7 +465,8 @@ export type ChangeColumnTableName<
 		>
 		: TDialect extends 'mysql' ? MySqlColumn<MakeColumnConfig<TColumn['_'], TAlias>>
 		: TDialect extends 'singlestore' ? SingleStoreColumn<MakeColumnConfig<TColumn['_'], TAlias>>
-		: TDialect extends 'sqlite' ? SQLiteColumn<MakeColumnConfig<TColumn['_'], TAlias>>
+		: TDialect extends 'sqlite'
+			? SQLiteColumn<MakeColumnConfig<TColumn['_'], TAlias> & UnionColumnMarkers<TColumn['_']>>
 		: TDialect extends 'mssql' ? MsSqlColumn<MakeColumnConfig<TColumn['_'], TAlias> & UnionColumnMarkers<TColumn['_']>>
 		: TDialect extends 'cockroach' ? CockroachColumn<
 				TColumn['_']['dataType'],
