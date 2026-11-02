@@ -21,6 +21,7 @@ import {
 	flattenEmbeddedColumnsConfig,
 	type HasEmbeddedUnions,
 	isEmbeddedGroupKey,
+	type NarrowRowByFilter,
 	type NestEmbedded,
 	type NestModel,
 	prefixEmbeddedGroupFilter,
@@ -927,6 +928,17 @@ export type InferSchemaEntrySelectModel<TEntry extends SchemaEntry> = TEntry ext
 		{ $inferSelect: Record<string, unknown> }
 	>['$inferSelect'];
 
+/**
+ * A row of a table with `taggedUnion()` groups, narrowed by the query's `where`: a union filtered on
+ * its tag comes back as the variants the filter admits.
+ */
+type NarrowRowByWhere<TEntry extends SchemaEntry, TRow, TWhere> = TWhere extends Record<string, unknown>
+	? TEntry extends Table<any>
+		? HasEmbeddedUnions<TEntry['_']['columns']> extends true ? NarrowRowByFilter<TRow, TEntry['_']['columns'], TWhere>
+		: TRow
+	: TRow
+	: TRow;
+
 export type BuildQueryResult<
 	TSchema extends TablesRelationalConfig,
 	TTableConfig extends TableRelationalConfig,
@@ -934,9 +946,13 @@ export type BuildQueryResult<
 	TModel extends Record<string, unknown> = InferSchemaEntrySelectModel<TTableConfig['table']>,
 > = TFullSelection extends true | Record<string, never> ? TModel
 	: TFullSelection extends Record<string, unknown> ? Simplify<
-			& (TFullSelection['columns'] extends Record<string, unknown>
-				? InferRelationalQueryColumnsResult<TTableConfig['table'], TModel, TFullSelection['columns']>
-				: TModel)
+			& NarrowRowByWhere<
+				TTableConfig['table'],
+				TFullSelection['columns'] extends Record<string, unknown>
+					? InferRelationalQueryColumnsResult<TTableConfig['table'], TModel, TFullSelection['columns']>
+					: TModel,
+				TFullSelection['where']
+			>
 			& (TFullSelection['extras'] extends Record<string, SQLWrapper | ((...args: any[]) => SQLWrapper)> ? {
 					[
 						K in NonUndefinedKeysOnly<

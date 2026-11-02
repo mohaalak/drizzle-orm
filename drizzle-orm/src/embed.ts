@@ -1109,6 +1109,54 @@ export type NestEmbedded<T> = [Extract<keyof T, DottedKey>] extends [never] ? T
 		}
 	>;
 
+/** The tag key of the `taggedUnion()` whose columns `TGroup` holds, keyed relative to it: `'kind'`. */
+type GroupUnionTag<TGroup> = {
+	[K in keyof TGroup & string]: K extends DottedKey ? never
+		: TGroup[K] extends { _: { unionTag: K } } ? K
+		: never;
+}[keyof TGroup & string];
+
+/** The tags a filter on a union's tag column admits: a value, `{ eq }` or `{ in }`. Anything else admits every tag. */
+type FilteredTags<TFilter> = TFilter extends string | number | boolean ? TFilter
+	: TFilter extends { eq: infer TValue extends string | number | boolean } ? TValue
+	: TFilter extends { in: readonly (infer TValue extends string | number | boolean)[] } ? TValue
+	: never;
+
+type NarrowGroupByFilter<TValue, TGroup, TFilter> = [keyof TGroup] extends [never] ? TValue
+	// Not distributed over `TValue`: a union's variants are narrowed together.
+	: TFilter extends Record<string, unknown>
+		? [TValue] extends [Record<string, unknown>]
+			? [GroupUnionTag<TGroup>] extends [never] ? NarrowRowByFilter<TValue, TGroup, TFilter>
+			: NarrowUnionByFilter<TValue, TGroup, TFilter, GroupUnionTag<TGroup>>
+		: TValue
+	: TValue;
+
+type NarrowUnionByFilter<
+	TValue extends Record<string, unknown>,
+	TGroup,
+	TFilter extends Record<string, unknown>,
+	TTag extends string,
+	TTags = FilteredTags<TFilter[TTag]>,
+	TMatched = [TTags] extends [never] ? TValue : Extract<TValue, { [K in TTag]: TTags }>,
+> = ([TMatched] extends [never] ? TValue : TMatched) extends infer TVariant
+	? TVariant extends { [K in TTag]: infer TName extends string } ? TFilter[TName] extends Record<string, unknown>
+			// A variant's own columns are filtered under its name, and so are unions nested in it.
+			? NarrowRowByFilter<TVariant, GroupOf<TGroup, TName>, TFilter[TName]>
+		: TVariant
+	: TVariant
+	: never;
+
+/**
+ * Narrows a relational query's row by its `where`: a `taggedUnion()` filtered on its tag comes back
+ * as the variants the filter admits, in the row and in nested groups and variants.
+ * `TColumns` is the table's flat, dotted column map.
+ */
+export type NarrowRowByFilter<TRow, TColumns, TFilter> = TFilter extends Record<string, unknown> ? {
+		[K in keyof TRow]: K extends keyof TFilter & string ? NarrowGroupByFilter<TRow[K], GroupOf<TColumns, K>, TFilter[K]>
+			: TRow[K];
+	}
+	: TRow;
+
 /**
  * {@link NestEmbedded} for a map whose every key is optional, such as an update's `set`. It is
  * not a conditional type, so an empty object stays assignable to it while the table is generic.

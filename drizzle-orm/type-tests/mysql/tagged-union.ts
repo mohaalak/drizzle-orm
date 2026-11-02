@@ -132,6 +132,61 @@ Expect<Equal<InferInsertModel<typeof files>, typeof files.$inferInsert>>();
 }
 
 {
+	// A `where` on a union's tag narrows the row to the variants it admits.
+	const relations = defineRelations({ files });
+	const rqb = drizzle.mock({ relations });
+	type Staff = Extract<Uploader, { kind: 'staff' }>;
+	type Parent = Extract<Uploader, { kind: 'parent' }>;
+
+	const staff = await rqb.query.files.findFirst({ where: { id: 1, uploader: { kind: 'staff' } } });
+	Expect<Equal<typeof staff, { id: number; uploader: Staff; meta: { label: string | null } } | undefined>>();
+
+	const viaEq = await rqb.query.files.findMany({ where: { uploader: { kind: { eq: 'system' } } } });
+	Expect<Equal<typeof viaEq[number]['uploader'], { kind: 'system' }>>();
+
+	const viaIn = await rqb.query.files.findMany({ where: { uploader: { kind: { in: ['staff', 'system'] } } } });
+	Expect<Equal<typeof viaIn[number]['uploader'], Staff | { kind: 'system' }>>();
+
+	const picked = await rqb.query.files.findFirst({
+		columns: { uploader: true },
+		where: { uploader: { kind: 'staff' } },
+	});
+	Expect<Equal<typeof picked, { uploader: Staff } | undefined>>();
+
+	// A union nested in a variant is filtered under the variant's name, and narrows the same way.
+	const viaApp = await rqb.query.files.findFirst({
+		where: { uploader: { kind: 'parent', parent: { via: { channel: 'app' } } } },
+	});
+	Expect<
+		Equal<
+			NonNullable<typeof viaApp>['uploader'],
+			{ kind: 'parent'; parentId: number; via: { channel: 'app'; version: string } }
+		>
+	>();
+	const anyParent = await rqb.query.files.findFirst({ where: { uploader: { kind: 'parent' } } });
+	Expect<Equal<NonNullable<typeof anyParent>['uploader'], Parent>>();
+
+	// Filters that do not pin the tag leave the union whole.
+	const notStaff = await rqb.query.files.findFirst({ where: { uploader: { kind: { ne: 'staff' } } } });
+	Expect<Equal<NonNullable<typeof notStaff>['uploader'], Uploader>>();
+	const byColumn = await rqb.query.files.findFirst({ where: { uploader: { staff: { staffId: 1 } } } });
+	Expect<Equal<NonNullable<typeof byColumn>['uploader'], Uploader>>();
+	const none = await rqb.query.files.findFirst({ where: { id: 1 } });
+	Expect<Equal<typeof none, File | undefined>>();
+
+	// A relation's `where` narrows the related rows.
+	const users = mysqlTable('users_tagged_union_narrow', { id: serial().primaryKey() });
+	const withFiles = defineRelations({ files, users }, (r) => ({
+		users: { files: r.many.files({ from: r.users.id, to: r.files.id }) },
+	}));
+	const rqbWith = drizzle.mock({ relations: withFiles });
+	const user = await rqbWith.query.users.findFirst({
+		with: { files: { where: { uploader: { kind: 'staff' } } } },
+	});
+	Expect<Equal<NonNullable<typeof user>['files'][number]['uploader'], Staff>>();
+}
+
+{
 	const owners = mysqlTable('owners_tagged_union', {
 		id: serial().primaryKey(),
 		owner: taggedUnion('kind', text(), {
