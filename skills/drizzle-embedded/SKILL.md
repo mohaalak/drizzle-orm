@@ -27,6 +27,7 @@ export const users = pgTable('users', {
 ```
 
 - **Naming**: a column's DB name is the group's prefix + its key. The prefix defaults to `<groupKey>_`; `{ prefix: '' }` drops it. A column given an explicit name (`text('billing_zip_code')`) keeps that name exactly. Table casing (`snakeCase.table`, `casing: 'snake_case'`) applies to the prefixed name: `homeAddress.zipCode` → `home_address_zip_code`. Without casing it is `homeAddress_zipCode`, which Postgres needs quoted — prefer snake_case casing.
+  - A `prefix` is concatenated as written, and casing finds word boundaries only at `_` or a capital letter: `{ prefix: 'llmAspectOpinion' }` + `count` → `llmAspectOpinioncount`, under any casing. For camelCase columns (`llmAspectOpinionCount`, what TypeORM embeddeds produce) keep the default prefix and use `camelCase.table` (from `drizzle-orm/<dialect>-core`).
 - **Referencing**: `users.address.city` and `users.address.geo.lat` are ordinary columns: use them in `eq()`, `orderBy`, indexes (`index().on(t.address.city)`), joins, aliases.
 - **Reading**: `select()` returns `{ address: { street, city, geo: { lat, lng } } }`. A group whose columns are all NULL reads as an object of nulls, not `null`. A left-joined table with no match reads as `null` as a whole. Partial selects take a whole group (`{ address: users.address }`) or one column (`{ lat: users.address.geo.lat }`).
 - **Inserting**: pass nested values. A group is required when any column in it is required; a group whose columns are all optional may be left out.
@@ -75,12 +76,14 @@ Signature: `taggedUnion(tagKey, tagColumnBuilder, variants, config?)`; `config` 
 - **Writing**: always pass the tag. Writing a variant sets the tag, writes the given columns, and clears every column of the other variants (and shared columns the variant doesn't declare). An unknown tag throws. A union cannot be set to `null`.
 - **Switching variants in an update**: `set({ uploader: { kind: 'parent', parentId: 1 } })` clears the staff columns. The update type does not force the new variant's required columns — when the row changes variant, pass every required column of the new variant, or it reads back with `null` where the type promises a value.
 - **Reading a variant column alone**: outside the whole union, a variant's columns read as stored, so `select({ staffId: files.uploader.staff.staffId })` is `number | null`.
-- **Relational queries**: filter on the tag like any group column: `where: { uploader: { kind: 'staff' } }`. Unions come back folded in rows and loaded relations.
+- **Relational queries**: `where`, `columns` and `orderBy` follow the column map, not the folded row: the tag and shared columns sit on the union, a variant's own columns under its variant — `where: { uploader: { kind: 'staff', staff: { staffId: 7 } } }`, not `{ uploader: { staffId: 7 } }` (that throws `Unknown relational filter field`). Unions come back folded in rows and loaded relations.
 - **Restrictions**: a variant cannot be named after the tag key, cannot contain a column with the tag key, and a variant column cannot be a primary key.
 
 ## Migrations
 
 drizzle-kit is the stock upstream package; it reads the table's flat columns, so `generate` and `push` see `address_city`, `uploader_kind`, etc. as plain columns. After changing a grouped schema, read the generated SQL before applying it. `drizzle-kit pull` never produces `embed()` or `taggedUnion()` — regroup pulled columns by hand.
+
+To adopt drizzle on a database whose schema already exists (for example one migrated by another ORM), baseline it: write the schema, run `drizzle-kit generate` into an empty migrations folder, then run `migrate(db, { migrationsFolder, init: true })` once against each existing database. `init` records that one migration as applied without running it. It writes nothing and returns `{ exitCode: 'databaseMigrations' }` when the database already has drizzle migrations recorded, or `{ exitCode: 'localMigrations' }` when the folder holds more than one migration. Fresh databases run the baseline normally with a plain `migrate()`. `init` is public only in our fork; upstream marks it `@internal`.
 
 ## Validators and seeding
 
