@@ -72,6 +72,14 @@ jobs:
 
       # Renames only the published manifest (dist/package.json); the source package stays `drizzle-orm`
       # so workspace references keep working. `repository` links the package to this repo.
+      #
+      # Drops `peerDependencies` and `peerDependenciesMeta`. GitHub Packages leaves
+      # `peerDependenciesMeta` out of the packument it serves, though the tarball keeps it. pnpm
+      # resolves from the packument, so it saw all ~50 driver/validator peers as required and
+      # auto-installed every one (react-native, expo, mssql, effect...). Every peer is optional, and the
+      # app installs the driver it uses itself. Without the declarations, pnpm's isolated linker still
+      # finds the driver through its hidden hoist (`.pnpm/node_modules`), and `nodeLinker: hoisted`
+      # finds it in the root node_modules.
       - name: Rewrite published manifest
         working-directory: drizzle-orm/dist
         env:
@@ -82,9 +90,10 @@ jobs:
             | .version = $v
             | .repository = { type: "git", url: "git+https://github.com/mohaalak/drizzle-orm.git", directory: "drizzle-orm" }
             | .publishConfig = { registry: "https://npm.pkg.github.com" }
+            | del(.peerDependencies, .peerDependenciesMeta)
           ' package.json > package.json.tmp
           mv package.json.tmp package.json
-          jq '{ name, version, repository, publishConfig }' package.json
+          jq '{ name, version, repository, publishConfig, peerDependencies, peerDependenciesMeta, dependencies }' package.json
 
       - name: Pack
         working-directory: drizzle-orm

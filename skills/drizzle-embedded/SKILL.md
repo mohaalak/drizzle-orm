@@ -99,7 +99,9 @@ Apps install the fork from GitHub Packages under an alias, so imports stay `driz
 //npm.pkg.github.com/:_authToken=${GITHUB_TOKEN}
 ```
 
-Releases are built and published by `.github/workflows/publish-github-packages.yaml` on `mohaalak/drizzle-orm`. It renames only the packed manifest; the source package stays `drizzle-orm`. To release after merging upstream into `feat/embedded-columns`:
+Releases are built and published by `.github/workflows/publish-github-packages.yaml` on `mohaalak/drizzle-orm`. It renames only the packed manifest; the source package stays `drizzle-orm`.
+
+The published package declares no peer dependencies; install the driver (`mysql2`, `pg`…) and any validator library yourself. GitHub Packages drops `peerDependenciesMeta` from the metadata it serves, so pnpm would treat all ~50 optional peers as required and install every one of them. The workflow deletes the peers from the published manifest to prevent that. To release after merging upstream into `feat/embedded-columns`:
 
 1. Run `pnpm build:orm` and the fork's tests (`drizzle-orm/tests/*embed*`, `*tagged-union*`, `mysql-migrate-init`).
 2. Pick the version `<upstream version>.pxp.<n>`. Examples: `1.0.0-rc.5.pxp.2` for a second fork release on rc.5, and `1.0.0-rc.6.pxp.1` after merging rc.6. Separate `pxp` with a dot, not a hyphen: `rc.5-pxp.1` sorts above every later upstream rc, and `rc.10-pxp.1` sorts below `rc.9-pxp.1`. Upstream's stable `1.0.0` needs `1.0.1-pxp.1`, because `1.0.0-pxp.1` sorts below `1.0.0` and fails drizzle-kit's `>=1.0.0` peer range.
