@@ -1,0 +1,99 @@
+# Publishes our fork's drizzle-orm (with embed() and taggedUnion()) to GitHub Packages as @mohaalak/drizzle-orm.
+# Release: push a tag `pxp-v<version>`, e.g. `pxp-v1.0.0-rc.5.pxp.1`. See skills/drizzle-embedded/SKILL.md, "Releasing the fork".
+name: Publish to GitHub Packages
+
+on:
+  push:
+    tags:
+      - 'pxp-v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to publish, e.g. 1.0.0-rc.5.pxp.2. Leave empty when running on a pxp-v* tag.'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: publish-github-packages
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve version
+        id: version
+        shell: bash
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          version="$INPUT_VERSION"
+          if [[ -z "$version" && "$GITHUB_REF_TYPE" == "tag" && "$GITHUB_REF_NAME" == pxp-v* ]]; then
+            version="${GITHUB_REF_NAME#pxp-v}"
+          fi
+          if [[ -z "$version" ]]; then
+            echo "::error::No version: push a pxp-v<version> tag or pass the version input."
+            exit 1
+          fi
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::'$version' is not a semver version."
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          registry-url: 'https://npm.pkg.github.com'
+          scope: '@mohaalak'
+
+      - uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - name: Install Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build drizzle-orm
+        run: pnpm build:orm
+
+      - name: Type tests
+        working-directory: drizzle-orm
+        run: pnpm test:types
+
+      # Renames only the published manifest (dist/package.json); the source package stays `drizzle-orm`
+      # so workspace references keep working. `repository` links the package to this repo.
+      - name: Rewrite published manifest
+        working-directory: drizzle-orm/dist
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          jq --arg v "$VERSION" '
+            .name = "@mohaalak/drizzle-orm"
+            | .version = $v
+            | .repository = { type: "git", url: "git+https://github.com/mohaalak/drizzle-orm.git", directory: "drizzle-orm" }
+            | .publishConfig = { registry: "https://npm.pkg.github.com" }
+          ' package.json > package.json.tmp
+          mv package.json.tmp package.json
+          jq '{ name, version, repository, publishConfig }' package.json
+
+      - name: Pack
+        working-directory: drizzle-orm
+        run: npm run pack
+
+      - name: Publish
+        working-directory: drizzle-orm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          npm publish package.tgz --registry https://npm.pkg.github.com --tag latest
+          echo "Published \`@mohaalak/drizzle-orm@${{ steps.version.outputs.version }}\`" >> "$GITHUB_STEP_SUMMARY"

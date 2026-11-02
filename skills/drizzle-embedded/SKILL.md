@@ -85,6 +85,32 @@ drizzle-kit is the stock upstream package; it reads the table's flat columns, so
 
 To adopt drizzle on a database whose schema already exists (for example one migrated by another ORM), baseline it: write the schema, run `drizzle-kit generate` into an empty migrations folder, then run `migrate(db, { migrationsFolder, init: true })` once against each existing database. `init` records that one migration as applied without running it. It writes nothing and returns `{ exitCode: 'databaseMigrations' }` when the database already has drizzle migrations recorded, or `{ exitCode: 'localMigrations' }` when the folder holds more than one migration. Fresh databases run the baseline normally with a plain `migrate()`. `init` is public only in our fork; upstream marks it `@internal`.
 
+## Installing and releasing the fork
+
+Apps install the fork from GitHub Packages under an alias, so imports stay `drizzle-orm`:
+
+```jsonc
+// package.json
+"drizzle-orm": "npm:@mohaalak/drizzle-orm@1.0.0-rc.5.pxp.1"
+```
+```ini
+# .npmrc — the token needs read:packages
+@mohaalak:registry=https://npm.pkg.github.com
+//npm.pkg.github.com/:_authToken=${GITHUB_TOKEN}
+```
+
+Releases are built and published by `.github/workflows/publish-github-packages.yaml` on `mohaalak/drizzle-orm`. It renames only the packed manifest; the source package stays `drizzle-orm`. To release after merging upstream into `feat/embedded-columns`:
+
+1. Run `pnpm build:orm` and the fork's tests (`drizzle-orm/tests/*embed*`, `*tagged-union*`, `mysql-migrate-init`).
+2. Pick the version `<upstream version>.pxp.<n>`. Examples: `1.0.0-rc.5.pxp.2` for a second fork release on rc.5, and `1.0.0-rc.6.pxp.1` after merging rc.6. Separate `pxp` with a dot, not a hyphen: `rc.5-pxp.1` sorts above every later upstream rc, and `rc.10-pxp.1` sorts below `rc.9-pxp.1`. Upstream's stable `1.0.0` needs `1.0.1-pxp.1`, because `1.0.0-pxp.1` sorts below `1.0.0` and fails drizzle-kit's `>=1.0.0` peer range.
+3. Push the branch and tag:
+   ```sh
+   git push origin feat/embedded-columns
+   git tag pxp-v1.0.0-rc.6.pxp.1 && git push origin pxp-v1.0.0-rc.6.pxp.1
+   ```
+   You can also run the workflow manually (Actions → "Publish to GitHub Packages") with a `version` input.
+4. Bump the alias version in apps. A version can't be republished; to redo a release, bump `<n>`.
+
 ## Validators and seeding
 
 For `createSelectSchema` / `createInsertSchema` / `createUpdateSchema` (zod, valibot, typebox, arktype, effect-schema) and for `drizzle-seed` against these tables, read [tooling.md](tooling.md).
