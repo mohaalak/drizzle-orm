@@ -122,6 +122,13 @@ Expect<Equal<InferInsertModel<typeof files>, typeof files.$inferInsert>>();
 
 	const picked = await rqb.query.files.findFirst({ columns: { uploader: true } });
 	Expect<Equal<typeof picked, { uploader: Uploader } | undefined>>();
+
+	// A query passed straight to a generic function is inferred from it without exceeding the instantiation depth.
+	const identity = <T>(value: T): T => value;
+	const passed = identity(await rqb.query.files.findFirst({ columns: { id: true }, where: { id: 1 } }));
+	Expect<Equal<typeof passed, { id: number } | undefined>>();
+	const passedUnion = identity(await rqb.query.files.findFirst({ columns: { uploader: true } }));
+	Expect<Equal<typeof passedUnion, { uploader: Uploader } | undefined>>();
 }
 
 {

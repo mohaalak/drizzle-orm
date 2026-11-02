@@ -1076,18 +1076,22 @@ export type ResolvedInsertColumnList<
  * `TColumns`, mirroring {@link flattenEmbeddedColumnsConfig}: `{ address: { city: true } }` →
  * `{ 'address.city': true }`, and `{ address: false }` → every column of the group set to `false`.
  */
-export type FlattenEmbeddedColumnsConfig<TColumns, TConfig, TPrefix extends string = ''> = [keyof TConfig] extends
-	[never] ? {}
-	: Simplify<
-		UnionToIntersection<
-			{
-				[K in keyof TConfig & string]: `${TPrefix}${K}` extends keyof TColumns ? { [P in `${TPrefix}${K}`]: TConfig[K] }
-					: TConfig[K] extends Record<string, unknown>
-						? FlattenEmbeddedColumnsConfig<TColumns, TConfig[K], `${TPrefix}${K}.`>
-					: { [P in keyof TColumns & `${TPrefix}${K}.${string}`]: TConfig[K] };
-			}[keyof TConfig & string]
-		>
-	>;
+export type FlattenEmbeddedColumnsConfig<TColumns, TConfig, TPrefix extends string = '', TDepth extends 0[] = []> =
+	[keyof TConfig] extends [never] ? {}
+		// Stops the recursion while `TConfig` is still generic, as when a call's return type is inferred from the
+		// call it is passed to: each level would otherwise grow `TPrefix` until TypeScript gives up (TS2589).
+		: TDepth['length'] extends 8 ? {}
+		: Simplify<
+			UnionToIntersection<
+				{
+					[K in keyof TConfig & string]: `${TPrefix}${K}` extends keyof TColumns
+						? { [P in `${TPrefix}${K}`]: TConfig[K] }
+						: TConfig[K] extends Record<string, unknown>
+							? FlattenEmbeddedColumnsConfig<TColumns, TConfig[K], `${TPrefix}${K}.`, [...TDepth, 0]>
+						: { [P in keyof TColumns & `${TPrefix}${K}.${string}`]: TConfig[K] };
+				}[keyof TConfig & string]
+			>
+		>;
 
 /**
  * Nests the dotted keys of a flat map into objects: `{ 'address.city': string }` →
