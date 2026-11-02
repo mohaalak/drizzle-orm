@@ -1,3 +1,4 @@
+import { nestEmbeddedRelationalRows } from '~/embed.ts';
 import { entityKind } from '~/entity.ts';
 import { QueryPromise } from '~/query-promise.ts';
 import { relationalQueryCacheConfig, relationalQueryCacheMetadata } from '~/relations.ts';
@@ -41,14 +42,17 @@ export class SQLiteAsyncRelationalQuery<TType extends 'sync' | 'async', TResult>
 	): SQLiteAsyncPreparedQuery<PreparedQueryConfig & { type: TType; all: TResult; get: TResult; execute: TResult }> {
 		const { query, builtQuery, usedTables } = this._toSQL();
 
-		const mapper = this.mapper ??= this.dialect.mapperGenerators.relationalRows({
-			isFirst: this.mode === 'first',
-			parseJson: true,
-			parseJsonIfString: false,
-			rootJsonMappers: false,
-			selection: query.selection,
-			arrayModeRoot: true,
-		});
+		const mapper = this.mapper ??= nestEmbeddedRelationalRows(
+			this.dialect.mapperGenerators.relationalRows({
+				isFirst: this.mode === 'first',
+				parseJson: true,
+				parseJsonIfString: false,
+				rootJsonMappers: false,
+				selection: query.selection,
+				arrayModeRoot: true,
+			}),
+			query.selection,
+		);
 
 		return this.session.prepareQuery(
 			builtQuery,

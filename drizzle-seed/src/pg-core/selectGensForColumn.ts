@@ -1,8 +1,11 @@
 import { generatorsMap } from '../generators/GeneratorFuncs.ts';
 import type { AbstractGenerator, GenerateInterval } from '../generators/Generators.ts';
 import type { Column } from '../types/tables.ts';
+import { ownColumnName } from '../utils.ts';
 
 const pickGenerator = (col: Column, isPrimaryKey: boolean) => {
+	const columnName = ownColumnName(col);
+
 	// INT ------------------------------------------------------------------------------------------------------------
 	if (
 		(col.columnType.includes('serial')
@@ -114,7 +117,7 @@ const pickGenerator = (col: Column, isPrimaryKey: boolean) => {
 		(col.columnType === 'text'
 			|| col.columnType.startsWith('varchar')
 			|| col.columnType.startsWith('char'))
-		&& col.name.toLowerCase().includes('name')
+		&& columnName.includes('name')
 	) {
 		const generator = new generatorsMap.GenerateFirstName[0]();
 
@@ -125,7 +128,7 @@ const pickGenerator = (col: Column, isPrimaryKey: boolean) => {
 		(col.columnType === 'text'
 			|| col.columnType.startsWith('varchar')
 			|| col.columnType.startsWith('char'))
-		&& col.name.toLowerCase().includes('email')
+		&& columnName.includes('email')
 	) {
 		const generator = new generatorsMap.GenerateEmail[0]();
 

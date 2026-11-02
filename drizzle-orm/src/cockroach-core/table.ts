@@ -1,4 +1,5 @@
 import { type Casing, getCasingFn } from '~/casing.ts';
+import { flattenEmbedBuilders, type NestEmbedded, nestEmbeddedColumns } from '~/embed.ts';
 import { entityKind } from '~/entity.ts';
 import {
 	type InferTableColumnsModels,
@@ -9,12 +10,12 @@ import {
 import type { CheckBuilder } from './checks.ts';
 import { type CockroachColumnsBuilders, getCockroachColumnBuilders } from './columns/all.ts';
 import type {
-	AnyCockroachColumnBuilder,
 	CockroachBuildColumns,
 	CockroachBuildExtraConfigColumns,
 	CockroachColumn,
 	CockroachColumnBuilder,
 	CockroachColumns,
+	CockroachTableColumnsMap,
 	ExtraConfigColumn,
 } from './columns/common.ts';
 import type { ForeignKey, ForeignKeyBuilder } from './foreign-keys.ts';
@@ -73,7 +74,8 @@ export type AnyCockroachTable<TPartial extends Partial<TableConfig> = {}> = Cock
 
 export type CockroachTableWithColumns<T extends TableConfig> =
 	& CockroachTable<T>
-	& T['columns']
+	// `embed()` groups are reached as nested objects: `users.address.city`.
+	& NestEmbedded<T['columns']>
 	& InferTableColumnsModels<T['columns']>
 	& {
 		/** @deprecated use `cockroachTable.withRLS()` instead*/
@@ -87,7 +89,7 @@ export type CockroachTableWithColumns<T extends TableConfig> =
 export function cockroachTableWithSchema<
 	TTableName extends string,
 	TSchemaName extends string | undefined,
-	TColumnsMap extends Record<string, AnyCockroachColumnBuilder>,
+	TColumnsMap extends CockroachTableColumnsMap,
 >(
 	name: TTableName,
 	columns: TColumnsMap | ((columnTypes: CockroachColumnsBuilders) => TColumnsMap),
@@ -115,7 +117,14 @@ export function cockroachTableWithSchema<
 		isAlias: false;
 	}>(name, schema, baseName);
 
-	const parsedColumns: TColumnsMap = typeof columns === 'function' ? columns(getCockroachColumnBuilders()) : columns;
+	const definedColumns: TColumnsMap = typeof columns === 'function'
+		? columns(getCockroachColumnBuilders())
+		: columns;
+	// `embed()` groups are flattened to dotted keys: `address: embed({ city })` becomes `'address.city'`.
+	const parsedColumns = flattenEmbedBuilders(
+		definedColumns as unknown as Record<string, CockroachColumnBuilder>,
+		casingFn,
+	);
 
 	const builtColumns = Object.fromEntries(
 		Object.entries(parsedColumns).map(([name, colBuilderBase]) => {
@@ -136,10 +145,12 @@ export function cockroachTableWithSchema<
 		}),
 	) as unknown as CockroachBuildExtraConfigColumns<TColumnsMap>;
 
-	const table = Object.assign(rawTable, builtColumns);
+	const shape = nestEmbeddedColumns(builtColumns as CockroachColumns);
+	const table = Object.assign(rawTable, shape);
 
 	table[Table.Symbol.Columns] = builtColumns;
-	table[Table.Symbol.ExtraConfigColumns] = builtColumnsForExtraConfig;
+	if (shape !== builtColumns) table[Table.Symbol.Shape] = shape;
+	table[Table.Symbol.ExtraConfigColumns] = nestEmbeddedColumns(builtColumnsForExtraConfig as any) as any;
 
 	if (extraConfig) {
 		table[CockroachTable.Symbol.ExtraConfigBuilder] = extraConfig as any;
@@ -162,7 +173,7 @@ export function cockroachTableWithSchema<
 export interface CockroachTableFnInternal<TSchema extends string | undefined = undefined> {
 	<
 		TTableName extends string,
-		TColumnsMap extends Record<string, AnyCockroachColumnBuilder>,
+		TColumnsMap extends CockroachTableColumnsMap,
 	>(
 		name: TTableName,
 		columns: TColumnsMap,
@@ -179,7 +190,7 @@ export interface CockroachTableFnInternal<TSchema extends string | undefined = u
 
 	<
 		TTableName extends string,
-		TColumnsMap extends Record<string, AnyCockroachColumnBuilder>,
+		TColumnsMap extends CockroachTableColumnsMap,
 	>(
 		name: TTableName,
 		columns: (columnTypes: CockroachColumnsBuilders) => TColumnsMap,

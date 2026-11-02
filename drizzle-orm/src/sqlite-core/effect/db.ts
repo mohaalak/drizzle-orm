@@ -3,6 +3,7 @@ import type { SqlError } from 'effect/sql/SqlError';
 import type { EffectCacheShape } from '~/cache/core/cache-effect.ts';
 import type { MutationOption } from '~/cache/core/cache.ts';
 import type { QueryEffectHKTBase } from '~/effect-core/query-effect.ts';
+import type { InsertColumnListArg, InsertColumnListKey, ResolvedInsertColumnList } from '~/embed.ts';
 import { entityKind, is } from '~/entity.ts';
 import type { TypedQueryBuilder } from '~/query-builders/query-builder.ts';
 import type { AnyRelations, EmptyRelations } from '~/relations.ts';
@@ -16,14 +17,13 @@ import { SQLiteEffectRelationalQuery, type SQLiteEffectRelationalQueryHKT } from
 import { SQLiteEffectRaw } from '~/sqlite-core/effect/raw.ts';
 import { SQLiteEffectSelectBase, type SQLiteEffectSelectBuilder } from '~/sqlite-core/effect/select.ts';
 import { SQLiteEffectUpdateBase, type SQLiteEffectUpdateBuilder } from '~/sqlite-core/effect/update.ts';
-import { type NoDuplicateColumns, SQLiteInsertBuilder } from '~/sqlite-core/query-builders/insert.ts';
+import { SQLiteInsertBuilder } from '~/sqlite-core/query-builders/insert.ts';
 import { RelationalQueryBuilder } from '~/sqlite-core/query-builders/query.ts';
 import { SQLiteSelectBuilder } from '~/sqlite-core/query-builders/select.ts';
 import { SQLiteUpdateBuilder } from '~/sqlite-core/query-builders/update.ts';
 import type { SQLiteTable } from '~/sqlite-core/table.ts';
 import { WithSubquery } from '~/subquery.ts';
-import type { InferInsertModel, RequiredInsertKeys } from '~/table.ts';
-import type { DrizzleTypeError, IsNever, JoinUnion } from '~/utils.ts';
+import type { InferInsertColumns, RequiredInsertKeys } from '~/table.ts';
 import { QueryBuilder } from '../query-builders/query-builder.ts';
 import type { SelectedFields } from '../query-builders/select.types.ts';
 import type { PreparedQueryConfig } from '../session.ts';
@@ -336,20 +336,17 @@ export class SQLiteEffectDatabase<
 		 */
 		function insert<
 			TTable extends SQLiteTable,
-			TColumnList extends (keyof InferInsertModel<TTable>)[] = [],
+			TColumnList extends InsertColumnListKey<InferInsertColumns<TTable>>[] = [],
 			TRequiredKeys extends string = RequiredInsertKeys<TTable>,
 		>(
 			into: TTable,
-			...columns: TColumnList extends [] ? []
-				: IsNever<TRequiredKeys> extends true ? TColumnList & NoDuplicateColumns<TColumnList>
-				: [TRequiredKeys] extends [TColumnList[number]] ? TColumnList & NoDuplicateColumns<TColumnList>
-				: DrizzleTypeError<
-					`Column selection is missing following required columns: ${JoinUnion<
-						`"${Exclude<TRequiredKeys, TColumnList[number]>}"`,
-						', '
-					>}`
-				>[]
-		): SQLiteEffectInsertBuilder<TTable, TRunResult, TEffectHKT, TColumnList extends [] ? 'all' : TColumnList>;
+			...columns: InsertColumnListArg<InferInsertColumns<TTable>, TColumnList, TRequiredKeys>
+		): SQLiteEffectInsertBuilder<
+			TTable,
+			TRunResult,
+			TEffectHKT,
+			ResolvedInsertColumnList<InferInsertColumns<TTable>, TColumnList>
+		>;
 		function insert<TTable extends SQLiteTable>(
 			into: TTable,
 			...columns: string[]
@@ -546,20 +543,17 @@ export class SQLiteEffectDatabase<
 	 */
 	insert<
 		TTable extends SQLiteTable,
-		TColumnList extends (keyof InferInsertModel<TTable>)[] = [],
+		TColumnList extends InsertColumnListKey<InferInsertColumns<TTable>>[] = [],
 		TRequiredKeys extends string = RequiredInsertKeys<TTable>,
 	>(
 		into: TTable,
-		...columns: TColumnList extends [] ? []
-			: IsNever<TRequiredKeys> extends true ? TColumnList & NoDuplicateColumns<TColumnList>
-			: [TRequiredKeys] extends [TColumnList[number]] ? TColumnList & NoDuplicateColumns<TColumnList>
-			: DrizzleTypeError<
-				`Column selection is missing following required columns: ${JoinUnion<
-					`"${Exclude<TRequiredKeys, TColumnList[number]>}"`,
-					', '
-				>}`
-			>[]
-	): SQLiteEffectInsertBuilder<TTable, TRunResult, TEffectHKT, TColumnList extends [] ? 'all' : TColumnList>;
+		...columns: InsertColumnListArg<InferInsertColumns<TTable>, TColumnList, TRequiredKeys>
+	): SQLiteEffectInsertBuilder<
+		TTable,
+		TRunResult,
+		TEffectHKT,
+		ResolvedInsertColumnList<InferInsertColumns<TTable>, TColumnList>
+	>;
 	insert<TTable extends SQLiteTable>(
 		into: TTable,
 		...columns: string[]

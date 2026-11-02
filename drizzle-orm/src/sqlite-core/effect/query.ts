@@ -1,4 +1,5 @@
 import { applyEffectWrapper, type QueryEffectHKTBase, type QueryEffectKind } from '~/effect-core/query-effect.ts';
+import { nestEmbeddedRelationalRows } from '~/embed.ts';
 import { entityKind } from '~/entity.ts';
 import { relationalQueryCacheConfig, relationalQueryCacheMetadata } from '~/relations.ts';
 import type { RunnableQuery } from '~/runnable-query.ts';
@@ -35,14 +36,17 @@ export class SQLiteEffectRelationalQuery<TResult, TEffectHKT extends QueryEffect
 	> {
 		const { query, builtQuery, usedTables } = this._toSQL();
 
-		const mapper = this.dialect.mapperGenerators.relationalRows({
-			isFirst: this.mode === 'first',
-			parseJson: true,
-			parseJsonIfString: false,
-			rootJsonMappers: false,
-			selection: query.selection,
-			arrayModeRoot: true,
-		});
+		const mapper = nestEmbeddedRelationalRows(
+			this.dialect.mapperGenerators.relationalRows({
+				isFirst: this.mode === 'first',
+				parseJson: true,
+				parseJsonIfString: false,
+				rootJsonMappers: false,
+				selection: query.selection,
+				arrayModeRoot: true,
+			}),
+			query.selection,
+		);
 
 		return this.session.prepareQuery(
 			builtQuery,

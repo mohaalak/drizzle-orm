@@ -1,6 +1,8 @@
 import { type Equal, sql } from 'drizzle-orm';
+import type { NestModelPartial } from 'drizzle-orm/embed';
 import {
 	customType,
+	embed,
 	integer,
 	pgEnum,
 	pgMaterializedView,
@@ -8,6 +10,7 @@ import {
 	pgTable,
 	pgView,
 	serial,
+	taggedUnion,
 	text,
 } from 'drizzle-orm/pg-core';
 import { CONSTANTS } from 'drizzle-orm/utils';
@@ -15,8 +18,8 @@ import { createInsertSchema, createSelectSchema, createUpdateSchema } from 'driz
 import { bigintStringModeSchema, jsonSchema } from 'drizzle-orm/valibot/column';
 import type { TopLevelCondition } from 'json-rules-engine';
 import * as v from 'valibot';
-import { test } from 'vitest';
-import { Expect, expectEnumValues, expectSchemaShape } from './utils';
+import { expect, test } from 'vitest';
+import { type DeepSimplify, Expect, expectEnumValues, expectSchemaShape } from './utils';
 
 const integerSchema = v.pipe(v.number(), v.minValue(CONSTANTS.INT32_MIN), v.maxValue(CONSTANTS.INT32_MAX), v.integer());
 const integerNullableSchema = v.nullable(integerSchema);
@@ -25,6 +28,8 @@ const integerNullableOptionalSchema = v.optional(v.nullable(integerSchema));
 
 const textSchema = v.string();
 const textOptionalSchema = v.optional(textSchema);
+const textNullableSchema = v.nullable(textSchema);
+const textNullableOptionalSchema = v.optional(textNullableSchema);
 
 const anySchema = v.any();
 
@@ -86,6 +91,240 @@ test('table - update', (t) => {
 	});
 	expectSchemaShape(t, expected).from(result);
 	Expect<Equal<typeof result, typeof expected>>();
+});
+
+const embedTable = pgTable('test', {
+	id: integer().generatedAlwaysAsIdentity().primaryKey(),
+	address: embed({
+		city: text().notNull(),
+		zip: integer(),
+		geo: embed({ lat: integer().notNull(), lng: integer().notNull() }),
+	}),
+	tags: embed({ main: text(), extra: text() }),
+});
+
+test('embedded columns - select', (t) => {
+	const result = createSelectSchema(embedTable);
+	const expected = v.object({
+		id: integerSchema,
+		address: v.object({
+			city: textSchema,
+			zip: integerNullableSchema,
+			geo: v.object({ lat: integerSchema, lng: integerSchema }),
+		}),
+		tags: v.object({ main: textNullableSchema, extra: textNullableSchema }),
+	});
+	expectSchemaShape(t, expected).from(result);
+	expectSchemaShape(t, expected.entries.address).from(result.entries.address);
+	expectSchemaShape(t, expected.entries.address.entries.geo).from(result.entries.address.entries.geo);
+	Expect<Equal<typeof result, typeof expected>>();
+
+	const row = {
+		id: 1,
+		address: { city: 'Berlin', zip: null, geo: { lat: 1, lng: 2 } },
+		tags: { main: 'a', extra: null },
+	};
+	expect(v.parse(result, row)).toStrictEqual(row);
+	expect(v.safeParse(result, { id: 1, 'address.city': 'Berlin' }).success).toBe(false);
+});
+
+test('embedded columns - insert', (t) => {
+	const result = createInsertSchema(embedTable);
+	const expected = v.object({
+		address: v.object({
+			city: textSchema,
+			zip: integerNullableOptionalSchema,
+			geo: v.object({ lat: integerSchema, lng: integerSchema }),
+		}),
+		tags: v.optional(v.object({ main: textNullableOptionalSchema, extra: textNullableOptionalSchema })),
+	});
+	expectSchemaShape(t, expected).from(result);
+	expectSchemaShape(t, expected.entries.address).from(result.entries.address);
+	Expect<Equal<typeof result, typeof expected>>();
+
+	expect(v.safeParse(result, { address: { city: 'Berlin', geo: { lat: 1, lng: 2 } } }).success).toBe(true);
+	expect(v.safeParse(result, { address: { geo: { lat: 1, lng: 2 } } }).success).toBe(false);
+	expect(v.safeParse(result, {}).success).toBe(false);
+});
+
+test('embedded columns - update', (t) => {
+	const result = createUpdateSchema(embedTable);
+	const expected = v.object({
+		address: v.optional(v.nullable(v.object({
+			city: textOptionalSchema,
+			zip: integerNullableOptionalSchema,
+			geo: v.optional(v.nullable(v.object({ lat: integerOptionalSchema, lng: integerOptionalSchema }))),
+		}))),
+		tags: v.optional(v.nullable(v.object({ main: textNullableOptionalSchema, extra: textNullableOptionalSchema }))),
+	});
+	expectSchemaShape(t, expected).from(result);
+	Expect<Equal<typeof result, typeof expected>>();
+
+	expect(v.safeParse(result, {}).success).toBe(true);
+	expect(v.safeParse(result, { address: { geo: { lat: 3 } } }).success).toBe(true);
+	expect(v.safeParse(result, { tags: null }).success).toBe(true);
+});
+
+test('embedded columns - refine', (t) => {
+	const result = createInsertSchema(embedTable, {
+		address: {
+			city: (schema) => v.pipe(schema, v.minLength(2)),
+			geo: { lat: v.pipe(v.string(), v.transform(Number)) },
+		},
+	});
+	const expected = v.object({
+		address: v.object({
+			city: v.pipe(textSchema, v.minLength(2)),
+			zip: integerNullableOptionalSchema,
+			geo: v.object({ lat: v.pipe(v.string(), v.transform(Number)), lng: integerSchema }),
+		}),
+		tags: v.optional(v.object({ main: textNullableOptionalSchema, extra: textNullableOptionalSchema })),
+	});
+	expectSchemaShape(t, expected.entries.address).from(result.entries.address);
+	Expect<Equal<typeof result, typeof expected>>();
+
+	expect(v.safeParse(result, { address: { city: 'B', geo: { lat: '1', lng: 2 } } }).success).toBe(false);
+	expect(v.parse(result, { address: { city: 'Berlin', geo: { lat: '1', lng: 2 } } }).address.geo.lat).toBe(1);
+
+	// @ts-expect-error - unknown key in a group
+	createInsertSchema(embedTable, { address: { country: v.string() } });
+});
+
+const unionTable = pgTable('test', {
+	id: serial().primaryKey(),
+	uploader: taggedUnion('kind', text(), {
+		staff: { staffId: integer().notNull(), note: text(), rank: integer().notNull().default(1) },
+		parent: {
+			parentId: integer().notNull(),
+			phone: embed({ number: text().notNull() }),
+			via: taggedUnion('channel', text(), {
+				app: { version: text().notNull() },
+				email: { address: text().notNull() },
+			}),
+		},
+		system: {},
+	}),
+	owner: taggedUnion('kind', text(), {
+		campus: { campusId: integer().notNull() },
+		staff: { campusId: integer(), staffId: integer().notNull() },
+		nobody: {},
+	}),
+});
+
+const staffRow = { kind: 'staff', staffId: 1, note: null, rank: 2 } as const;
+const parentRow = {
+	kind: 'parent',
+	parentId: 2,
+	phone: { number: '123' },
+	via: { channel: 'email', address: 'a@b.c' },
+} as const;
+
+test('tagged union - select', () => {
+	const result = createSelectSchema(unionTable);
+	Expect<Equal<v.InferOutput<typeof result>, typeof unionTable.$inferSelect>>();
+
+	const rows = [
+		{ id: 1, uploader: staffRow, owner: { kind: 'campus', campusId: 1 } },
+		{ id: 2, uploader: parentRow, owner: { kind: 'staff', campusId: null, staffId: 3 } },
+		{ id: 3, uploader: { kind: 'system' }, owner: { kind: 'nobody' } },
+	];
+	for (const row of rows) expect(v.parse(result, row)).toStrictEqual(row);
+
+	const row = rows[0]!;
+	// Unknown tag
+	expect(v.safeParse(result, { ...row, uploader: { kind: 'robot' } }).success).toBe(false);
+	// Missing a required field of the variant, including a nullable one
+	expect(v.safeParse(result, { ...row, uploader: { kind: 'staff', note: null, rank: 1 } }).success).toBe(false);
+	expect(v.safeParse(result, { ...row, uploader: { kind: 'staff', staffId: 1, rank: 1 } }).success).toBe(false);
+	// A field of another variant
+	expect(v.safeParse(result, { ...row, uploader: { kind: 'system', staffId: 1 } }).success).toBe(false);
+	expect(v.safeParse(result, { ...row, owner: { kind: 'nobody', campusId: 1 } }).success).toBe(false);
+	// A shared column is nullable only in the variants that declare it so
+	expect(v.safeParse(result, { ...row, owner: { kind: 'campus', campusId: null } }).success).toBe(false);
+	// A nested union is discriminated too
+	expect(v.safeParse(result, { ...row, uploader: { ...parentRow, via: { channel: 'app', address: 'a' } } }).success)
+		.toBe(false);
+});
+
+test('tagged union - insert', () => {
+	const result = createInsertSchema(unionTable);
+	Expect<Equal<v.InferOutput<typeof result>, typeof unionTable.$inferInsert>>();
+
+	const values = [
+		{ uploader: { kind: 'staff', staffId: 1 }, owner: { kind: 'staff', staffId: 3 } },
+		{ uploader: parentRow, owner: { kind: 'campus', campusId: 1 } },
+		{ uploader: { kind: 'system' }, owner: { kind: 'nobody' } },
+	];
+	for (const value of values) expect(v.parse(result, value)).toStrictEqual(value);
+
+	const value = values[0]!;
+	expect(v.safeParse(result, { owner: value.owner }).success).toBe(false);
+	expect(v.safeParse(result, { ...value, uploader: { kind: 'robot' } }).success).toBe(false);
+	expect(v.safeParse(result, { ...value, uploader: { kind: 'staff' } }).success).toBe(false);
+	expect(v.safeParse(result, { ...value, uploader: { kind: 'system', staffId: 1 } }).success).toBe(false);
+	expect(v.safeParse(result, { ...value, uploader: { ...parentRow, phone: undefined } }).success).toBe(false);
+});
+
+test('tagged union - update', () => {
+	const result = createUpdateSchema(unionTable);
+	Expect<
+		Equal<
+			DeepSimplify<v.InferOutput<typeof result>>,
+			DeepSimplify<NestModelPartial<typeof unionTable['_']['columns'], never>>
+		>
+	>();
+
+	const sets = [
+		{},
+		{ uploader: { kind: 'staff', note: 'renamed' } },
+		{ uploader: { kind: 'parent', via: { channel: 'app' } }, owner: { kind: 'campus' } },
+	];
+	for (const set of sets) expect(v.parse(result, set)).toStrictEqual(set);
+
+	expect(v.safeParse(result, { uploader: { staffId: 1 } }).success).toBe(false);
+	expect(v.safeParse(result, { uploader: null }).success).toBe(false);
+	expect(v.safeParse(result, { uploader: { kind: 'robot' } }).success).toBe(false);
+	expect(v.safeParse(result, { uploader: { kind: 'system', staffId: 1 } }).success).toBe(false);
+});
+
+test('tagged union - refine', () => {
+	const result = createSelectSchema(unionTable, {
+		id: (schema) => v.pipe(schema, v.maxValue(100)),
+		uploader: {
+			staff: { staffId: (schema) => v.pipe(schema, v.maxValue(10)) },
+			parent: { via: { app: { version: v.pipe(v.string(), v.maxLength(1)) } } },
+		},
+		owner: { campusId: (schema) => v.pipe(schema, v.minValue(1)) },
+	});
+	Expect<Equal<v.InferOutput<typeof result>, typeof unionTable.$inferSelect>>();
+
+	const row = { id: 1, uploader: staffRow, owner: { kind: 'campus', campusId: 1 } };
+	expect(v.parse(result, row)).toStrictEqual(row);
+	expect(v.safeParse(result, { ...row, id: 101 }).success).toBe(false);
+	expect(v.safeParse(result, { ...row, uploader: { ...staffRow, staffId: 11 } }).success).toBe(false);
+	expect(v.safeParse(result, { ...row, uploader: { ...parentRow, via: { channel: 'app', version: '22' } } }).success)
+		.toBe(false);
+	// A shared column's refinement applies in every variant that declares it
+	expect(v.safeParse(result, { ...row, owner: { kind: 'campus', campusId: 0 } }).success).toBe(false);
+	expect(v.safeParse(result, { ...row, owner: { kind: 'staff', campusId: 0, staffId: 1 } }).success).toBe(false);
+	expect(v.safeParse(result, { ...row, owner: { kind: 'staff', campusId: null, staffId: 1 } }).success).toBe(true);
+
+	// @ts-expect-error - a union's tag column cannot be refined
+	createSelectSchema(unionTable, { uploader: { kind: v.string() } });
+});
+
+test('tagged union - view selecting a union', () => {
+	const view = pgView('test_view').as((qb) =>
+		qb.select({ uploader: unionTable.uploader, staff: unionTable.uploader.staff }).from(unionTable)
+	);
+
+	const result = createSelectSchema(view);
+	Expect<Equal<DeepSimplify<v.InferOutput<typeof result>>, DeepSimplify<typeof view.$inferSelect>>>();
+
+	// Outside its union, a variant's columns read as stored: nullable
+	const row = { uploader: staffRow, staff: { staffId: null, note: null, rank: null } };
+	expect(v.parse(result, row)).toStrictEqual(row);
+	expect(v.safeParse(result, { ...row, uploader: { kind: 'robot' } }).success).toBe(false);
 });
 
 test('view qb - select', (t) => {

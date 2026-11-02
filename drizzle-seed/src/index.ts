@@ -1,5 +1,5 @@
 /* eslint-disable drizzle-internal/require-entity-kind */
-import type { InferInsertModel, Table as DrizzleTable } from 'drizzle-orm';
+import type { Table as DrizzleTable } from 'drizzle-orm';
 import { is } from 'drizzle-orm';
 import type { Relations } from 'drizzle-orm/_relations';
 
@@ -41,6 +41,7 @@ import { filterSqliteTables, resetSqlite, seedSqlite } from './sqlite-core/index
 import type { DrizzleStudioObjectType, DrizzleStudioRelationType } from './types/drizzleStudio.ts';
 import type { DbType, RefinementsType, SeedOperation } from './types/seedService.ts';
 import type { Relation, SeedRelations, Table } from './types/tables.ts';
+import { getTableUnions, nestEmbeddedRow } from './utils.ts';
 
 type SchemaValuesType =
 	| PgTable
@@ -57,6 +58,31 @@ type SchemaValuesType =
 	| Relations
 	| any;
 
+// a column, or a group of them
+type IsColumnOrGroup<T, ColumnT> = T extends ColumnT ? true : IsColumnGroup<T, ColumnT>;
+
+// a table's `embed()` group, which is an object holding columns and further groups
+type IsColumnGroup<T, ColumnT> = T extends ColumnT ? false
+	: T extends (...args: any[]) => any ? false
+	: T extends object ? [keyof T] extends [never] ? false
+		: false extends { [key in keyof T]: IsColumnOrGroup<T[key], ColumnT> }[keyof T] ? false
+		: true
+	: false;
+
+/**
+ * The generators a table's columns can be given. An `embed()` group is refined as a nested object, the same shape it
+ * has on the table: `{ address: { city: funcs.city() } }`.
+ */
+export type RefineColumns<TABLE, ColumnT> = {
+	// iterates through table fields. example -> table: {"columnName": PgColumn}
+	[
+		column in keyof TABLE as TABLE[column] extends ColumnT ? column
+			: IsColumnGroup<TABLE[column], ColumnT> extends true ? column
+			: never
+	]?: TABLE[column] extends ColumnT ? AbstractGenerator<any> | false
+		: RefineColumns<TABLE[column], ColumnT>;
+};
+
 export type RefineTypes<SCHEMA, TableT, ColumnT> = SCHEMA extends {
 	[key: string]: SchemaValuesType;
 } ? {
@@ -66,13 +92,7 @@ export type RefineTypes<SCHEMA, TableT, ColumnT> = SCHEMA extends {
 				: never
 		]?: {
 			count?: number;
-			columns?: {
-				// iterates through table fields. example -> table: {"columnName": PgColumn}
-				[
-					column in keyof SCHEMA[fieldName] as SCHEMA[fieldName][column] extends ColumnT ? column
-						: never
-				]?: AbstractGenerator<any> | false;
-			};
+			columns?: RefineColumns<SCHEMA[fieldName], ColumnT>;
 			with?: {
 				[
 					refTable in keyof SCHEMA as SCHEMA[refTable] extends TableT ? refTable
@@ -113,11 +133,14 @@ type SchemaTables<SCHEMA> = {
 	[tableName in keyof SCHEMA as SCHEMA[tableName] extends DrizzleTable ? tableName : never]: SCHEMA[tableName];
 };
 
+// what a table takes on insert, with the columns of an `embed()` group nested
+type InsertModel<TABLE> = TABLE extends { readonly $inferInsert: infer TInsert } ? TInsert : never;
+
 /**
  * rows that would be written by a seed, keyed by the name each table has in the schema object given to `seed`.
  */
 export type DryRunResult<SCHEMA, TABLES = SchemaTables<SCHEMA>> = {
-	[tableName in keyof TABLES]: TABLES[tableName] extends DrizzleTable ? InferInsertModel<TABLES[tableName]>[] : never;
+	[tableName in keyof TABLES]: TABLES[tableName] extends DrizzleTable ? InsertModel<TABLES[tableName]>[] : never;
 };
 
 /**
@@ -126,11 +149,11 @@ export type DryRunResult<SCHEMA, TABLES = SchemaTables<SCHEMA>> = {
  */
 export type DryRunChunk<SCHEMA, TABLES = SchemaTables<SCHEMA>> = {
 	[tableName in keyof TABLES]: TABLES[tableName] extends DrizzleTable ?
-			| { type: 'insert'; tableName: tableName; rows: InferInsertModel<TABLES[tableName]>[] }
+			| { type: 'insert'; tableName: tableName; rows: InsertModel<TABLES[tableName]>[] }
 			| {
 				type: 'update';
 				tableName: tableName;
-				values: Partial<InferInsertModel<TABLES[tableName]>>;
+				values: Partial<InsertModel<TABLES[tableName]>>;
 				whereColumn: string;
 				whereValue: unknown;
 			}
@@ -154,6 +177,9 @@ class SeedDryRun<TResult, TChunk> implements Promise<TResult>, AsyncIterable<TCh
 		private buildPlan: () => Promise<SeedPlan>,
 		private chunksOf: (plan: SeedPlan) => Iterable<TChunk>,
 		private collect: (chunks: TChunk[], plan: SeedPlan) => TResult,
+		// how a chunk is handed to someone iterating. Collecting works on the chunks as they were generated, since the
+		// second pass over cyclic tables finds its rows by the generated column names
+		private present: (chunk: TChunk, plan: SeedPlan) => TChunk = (chunk) => chunk,
 	) {}
 
 	private async collectAll(): Promise<TResult> {
@@ -192,7 +218,8 @@ class SeedDryRun<TResult, TChunk> implements Promise<TResult>, AsyncIterable<TCh
 	}
 
 	async *[Symbol.asyncIterator](): AsyncIterator<TChunk> {
-		yield* this.chunksOf(await this.buildPlan());
+		const plan = await this.buildPlan();
+		for (const chunk of this.chunksOf(plan)) yield this.present(chunk, plan);
 	}
 }
 
@@ -329,8 +356,21 @@ class SeedPromise<
 			},
 			(chunks, plan) =>
 				Object.fromEntries(
-					new SeedService().collectSeedRows(chunks as unknown as SeedOperation[], Object.keys(plan.tables)),
+					[...new SeedService().collectSeedRows(chunks as unknown as SeedOperation[], Object.keys(plan.tables))].map((
+						[tableName, rows],
+					) => {
+						const unions = getTableUnions(plan.tables[tableName] as object);
+						return [tableName, rows.map((row) => nestEmbeddedRow(row, unions))];
+					}),
 				) as DryRunResult<SCHEMA>,
+			// an `embed()` group is generated under dotted column names but handed back nested, as the table writes it
+			(chunk, plan) => {
+				const unions = getTableUnions(plan.tables[chunk.tableName as string] as object);
+
+				return chunk.type === 'insert'
+					? { ...chunk, rows: (chunk.rows as {}[]).map((row) => nestEmbeddedRow(row, unions)) } as typeof chunk
+					: { ...chunk, values: nestEmbeddedRow(chunk.values as {}, unions) } as typeof chunk;
+			},
 		);
 	}
 }

@@ -8,6 +8,18 @@ import type {
 	PreparedQueryConfig,
 } from '~/cockroach-core/session.ts';
 import type { CockroachTable, TableConfig } from '~/cockroach-core/table.ts';
+import {
+	expandInsertColumnList,
+	flattenEmbeddedValues,
+	flattenSelectedFields,
+	getTableShape,
+	type HasEmbeddedUnions,
+	type InsertSelectionShape,
+	type ListedInsertColumns,
+	type NestEmbedded,
+	type NestModel,
+	type ValidateNestedInsertSelection,
+} from '~/embed.ts';
 import { entityKind, is } from '~/entity.ts';
 import type { TypedQueryBuilder } from '~/query-builders/query-builder.ts';
 import type { SelectResultFields } from '~/query-builders/select.types.ts';
@@ -17,13 +29,13 @@ import { SelectionProxyHandler } from '~/selection-proxy.ts';
 import type { ColumnsSelection, Placeholder, Query, SQLWrapper } from '~/sql/sql.ts';
 import { SQL, sql } from '~/sql/sql.ts';
 import type { Subquery } from '~/subquery.ts';
-import type { InferInsertModel } from '~/table.ts';
+import type { InferInsertColumns } from '~/table.ts';
 import { getTableName, Table } from '~/table.ts';
 import { tracer } from '~/tracing.ts';
 import { type DrizzleTypeError, mapUpdateSet, orderSelectedFields } from '~/utils.ts';
 import type { AnyCockroachColumn, CockroachColumn } from '../columns/common.ts';
 import { QueryBuilder } from './query-builder.ts';
-import type { SelectedFieldsFlat, SelectedFieldsOrdered } from './select.types.ts';
+import type { SelectedFields, SelectedFieldsOrdered } from './select.types.ts';
 import type { CockroachUpdateSetSource } from './update.ts';
 
 export interface CockroachInsertConfig<TTable extends CockroachTable = CockroachTable> {
@@ -32,7 +44,7 @@ export interface CockroachInsertConfig<TTable extends CockroachTable = Cockroach
 	values: Record<string, unknown>[] | TypedQueryBuilder<CockroachInsertSelection<TTable>> | SQL;
 	withList?: Subquery[];
 	onConflict?: SQL;
-	returningFields?: SelectedFieldsFlat;
+	returningFields?: SelectedFields;
 	returning?: SelectedFieldsOrdered;
 	select?: boolean;
 	columnList?: string[];
@@ -42,29 +54,30 @@ export type CockroachInsertValue<
 	TTable extends CockroachTable<TableConfig>,
 	OverrideT extends boolean = false,
 	TColumnsList extends string[] | 'all' = 'all',
-	TModel extends Record<string, any> = InferInsertModel<TTable, { dbColumnNames: false; override: OverrideT }>,
+	TModel extends Record<string, any> = InferInsertColumns<TTable, { dbColumnNames: false; override: OverrideT }>,
 > =
-	& {
-		[K in keyof TModel as TColumnsList extends 'all' ? K : Extract<K, TColumnsList[number]>]:
-			| TModel[K]
-			| SQL
-			| Placeholder;
-	}
+	& (HasEmbeddedUnions<TTable['_']['columns']> extends true ? NestModel<
+			TColumnsList extends 'all' ? TTable['_']['columns']
+				: Pick<TTable['_']['columns'], Extract<keyof TTable['_']['columns'], TColumnsList[number]>>,
+			'insert',
+			{ override: OverrideT },
+			SQL | Placeholder
+		>
+		: NestEmbedded<
+			{
+				[K in keyof TModel as TColumnsList extends 'all' ? K : Extract<K, TColumnsList[number]>]:
+					| TModel[K]
+					| SQL
+					| Placeholder;
+			}
+		>)
 	& {};
 
 export type CockroachInsertSelection<
 	TTable extends CockroachTable<TableConfig>,
 	TColumnsList extends string[] | 'all' = 'all',
-	TModel extends Record<string, unknown> = InferInsertModel<TTable>,
-> =
-	& {
-		[K in keyof TModel as TColumnsList extends 'all' ? K : Extract<K, TColumnsList[number]>]:
-			| AnyCockroachColumn
-			| SQL
-			| SQL.Aliased
-			| TModel[K];
-	}
-	& {};
+	TModel extends Record<string, unknown> = InferInsertColumns<TTable>,
+> = InsertSelectionShape<ListedInsertColumns<TModel, TColumnsList>, AnyCockroachColumn>;
 
 export type NoDuplicateColumns<
 	T extends readonly unknown[],
@@ -80,26 +93,27 @@ export type ValidateInsertSelectionKey<
 	TTable extends CockroachTable<TableConfig>,
 	TSelection extends CockroachInsertSelection<any>,
 	K extends keyof TSelection,
-> = K extends keyof InferInsertModel<TTable> ? TSelection[K]
-	: K extends keyof InferInsertModel<TTable, { override: true }> ? DrizzleTypeError<
-			`Column "${
-				& K
-				& string}" in table "${TTable['_'][
-				'name'
-			]}" is a generated column - manual value insertion restricted`
-		>
-	: DrizzleTypeError<`Column "${K & string}" does not exist in table "${TTable['_']['name']}"`>;
+> = ValidateNestedInsertSelection<
+	Pick<TSelection, K>,
+	InferInsertColumns<TTable>,
+	InferInsertColumns<TTable, { override: true }>,
+	'all',
+	TTable['_']['name'],
+	'restricted'
+>[K];
 
 export type NoUnknownKeysInInsertSelection<
 	TTable extends CockroachTable<TableConfig>,
 	TSelection extends CockroachInsertSelection<any>,
 	TColumnList extends string[] | 'all' = 'all',
-> = {
-	[K in keyof TSelection]: TColumnList extends string[]
-		? K extends TColumnList[number] ? ValidateInsertSelectionKey<TTable, TSelection, K>
-		: DrizzleTypeError<`Column "${K & string}" is not included in the insert column selection`>
-		: ValidateInsertSelectionKey<TTable, TSelection, K>;
-};
+> = ValidateNestedInsertSelection<
+	TSelection,
+	InferInsertColumns<TTable>,
+	InferInsertColumns<TTable, { override: true }>,
+	TColumnList,
+	TTable['_']['name'],
+	'restricted'
+>;
 
 export class CockroachInsertBuilder<
 	TTable extends CockroachTable,
@@ -118,7 +132,9 @@ export class CockroachInsertBuilder<
 		private dialect: CockroachDialect,
 		private withList?: Subquery[],
 		private columnList?: string[],
-	) {}
+	) {
+		if (columnList) this.columnList = expandInsertColumnList(table, columnList);
+	}
 
 	values(value: CockroachInsertValue<TTable, OverrideT, TColumnList>): CockroachInsertBase<TTable, TQueryResult>;
 	values(values: CockroachInsertValue<TTable, OverrideT, TColumnList>[]): CockroachInsertBase<TTable, TQueryResult>;
@@ -133,6 +149,7 @@ export class CockroachInsertBuilder<
 		if (values.length === 0) {
 			throw new Error('values() must be called with at least one value');
 		}
+		values = values.map((value) => flattenEmbeddedValues(this.table, value)) as typeof values;
 		return new CockroachInsertBase(
 			this.table,
 			values,
@@ -169,7 +186,7 @@ export class CockroachInsertBuilder<
 		const select = typeof selectQuery === 'function' ? selectQuery(new QueryBuilder()) : selectQuery;
 		if (!is(select, SQL)) {
 			const insertCols = Object.keys(this.table[Table.Symbol.Columns]);
-			const selected = Object.keys(select._.selectedFields);
+			const selected = Object.keys(flattenSelectedFields(select._.selectedFields));
 
 			for (const col of selected) {
 				if (!insertCols.includes(col)) {
@@ -212,7 +229,7 @@ export type CockroachInsertWithout<
 export type CockroachInsertReturning<
 	T extends AnyCockroachInsert,
 	TDynamic extends boolean,
-	TSelectedFields extends SelectedFieldsFlat,
+	TSelectedFields extends SelectedFields,
 > = CockroachInsertBase<
 	T['_']['table'],
 	T['_']['queryResult'],
@@ -353,11 +370,11 @@ export class CockroachInsertBase<
 	 * ```
 	 */
 	returning(): CockroachInsertWithout<CockroachInsertReturningAll<this, TDynamic>, TDynamic, 'returning'>;
-	returning<TSelectedFields extends SelectedFieldsFlat>(
+	returning<TSelectedFields extends SelectedFields>(
 		fields: TSelectedFields,
 	): CockroachInsertWithout<CockroachInsertReturning<this, TDynamic, TSelectedFields>, TDynamic, 'returning'>;
 	returning(
-		fields: SelectedFieldsFlat = this.config.table[Table.Symbol.Columns],
+		fields: SelectedFields = getTableShape(this.config.table) as SelectedFields,
 	): CockroachInsertWithout<AnyCockroachInsert, TDynamic, 'returning'> {
 		this.config.returningFields = fields;
 		this.config.returning = orderSelectedFields<CockroachColumn>(

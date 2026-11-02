@@ -1,20 +1,23 @@
 import type * as t from '@sinclair/typebox';
 import type { CockroachEnum } from '~/cockroach-core/columns/enum.ts';
+import type { NestEmbedded } from '~/embed.ts';
 import type { PgEnum } from '~/pg-core/columns/enum.ts';
-import type { InferInsertModel, InferSelectModel, Table } from '~/table.ts';
+import type { InferInsertColumns, InferInsertModel, InferSelectModel, Table } from '~/table.ts';
 import type { View } from '~/view.ts';
 import type { EnumValuesToEnum } from '../utils.ts';
 import type { BuildRefine, BuildSchema, NoUnknownKeys } from './schema.types.internal.ts';
 
 export interface CreateSelectSchema {
-	<TTable extends Table>(table: TTable): BuildSchema<'select', TTable['_']['columns'], undefined>;
+	<TTable extends Table>(
+		table: TTable,
+	): BuildSchema<'select', NestEmbedded<TTable['_']['columns']>, undefined>;
 	<
 		TTable extends Table,
-		TRefine extends BuildRefine<TTable['_']['columns']>,
+		TRefine extends BuildRefine<NestEmbedded<TTable['_']['columns']>>,
 	>(
 		table: TTable,
 		refine?: NoUnknownKeys<TRefine, InferSelectModel<TTable>>,
-	): BuildSchema<'select', TTable['_']['columns'], TRefine>;
+	): BuildSchema<'select', NestEmbedded<TTable['_']['columns']>, TRefine>;
 
 	<TView extends View>(view: TView): BuildSchema<'select', TView['_']['selectedFields'], undefined>;
 	<
@@ -31,25 +34,29 @@ export interface CreateSelectSchema {
 }
 
 export interface CreateInsertSchema {
-	<TTable extends Table>(table: TTable): BuildSchema<'insert', TTable['_']['columns'], undefined>;
+	<TTable extends Table>(
+		table: TTable,
+	): BuildSchema<'insert', NestEmbedded<TTable['_']['columns']>, undefined>;
 	<
 		TTable extends Table,
-		TRefine extends BuildRefine<Pick<TTable['_']['columns'], keyof InferInsertModel<TTable>>>,
+		TRefine extends BuildRefine<NestEmbedded<Pick<TTable['_']['columns'], keyof InferInsertColumns<TTable>>>>,
 	>(
 		table: TTable,
 		refine?: NoUnknownKeys<TRefine, InferInsertModel<TTable>>,
-	): BuildSchema<'insert', TTable['_']['columns'], TRefine>;
+	): BuildSchema<'insert', NestEmbedded<TTable['_']['columns']>, TRefine>;
 }
 
 export interface CreateUpdateSchema {
-	<TTable extends Table>(table: TTable): BuildSchema<'update', TTable['_']['columns'], undefined>;
+	<TTable extends Table>(
+		table: TTable,
+	): BuildSchema<'update', NestEmbedded<TTable['_']['columns']>, undefined>;
 	<
 		TTable extends Table,
-		TRefine extends BuildRefine<Pick<TTable['_']['columns'], keyof InferInsertModel<TTable>>>,
+		TRefine extends BuildRefine<NestEmbedded<Pick<TTable['_']['columns'], keyof InferInsertColumns<TTable>>>>,
 	>(
 		table: TTable,
 		refine?: TRefine,
-	): BuildSchema<'update', TTable['_']['columns'], TRefine>;
+	): BuildSchema<'update', NestEmbedded<TTable['_']['columns']>, TRefine>;
 }
 
 export interface CreateSchemaFactoryOptions {

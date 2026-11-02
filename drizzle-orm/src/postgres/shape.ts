@@ -18,6 +18,7 @@ import {
 import { geometry as pgGeometry } from '@drizzle-team/minipg/geometry';
 import { getOriginalColumnFromAlias } from '~/alias.ts';
 import { Column } from '~/column.ts';
+import { selectedFieldsUnionSites } from '~/embed.ts';
 import { is } from '~/entity.ts';
 import type { SelectedFieldsOrdered } from '~/operations.ts';
 import type { PostgresType } from '~/pg-core/codecs.ts';
@@ -325,10 +326,12 @@ function relationalShape(selection: RelationalSelection): ShapeEntries {
 export function buildShape(
 	selection: PreparedQuerySelection,
 	nullableObjectPaths?: string[],
-): ShapeSpec {
+): ShapeSpec | undefined {
 	if (selection.type === 'relational') return relationalShape(selection.fields);
 
 	const { fields } = selection;
+	// A `taggedUnion()` is folded into the variant it holds by the rows mapper, so it is left to one.
+	if (selectedFieldsUnionSites(fields)) return undefined;
 	const nullableKeys = new Set(nullableObjectPaths ?? []);
 
 	const order: string[] = [];

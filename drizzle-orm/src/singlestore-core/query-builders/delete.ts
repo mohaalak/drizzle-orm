@@ -1,3 +1,4 @@
+import { getTableShape } from '~/embed.ts';
 import { entityKind } from '~/entity.ts';
 import { QueryPromise } from '~/query-promise.ts';
 import { SelectionProxyHandler } from '~/selection-proxy.ts';
@@ -14,7 +15,6 @@ import type {
 import type { SingleStoreTable } from '~/singlestore-core/table.ts';
 import type { Placeholder, Query, SQL, SQLWrapper } from '~/sql/sql.ts';
 import type { Subquery } from '~/subquery.ts';
-import { Table } from '~/table.ts';
 import { usedTablesOf } from '~/used-tables.ts';
 import type { ValueOrArray } from '~/utils.ts';
 import type { SingleStoreColumn } from '../columns/common.ts';
@@ -154,7 +154,7 @@ export class SingleStoreDeleteBase<
 		if (typeof columns[0] === 'function') {
 			const orderBy = columns[0](
 				new Proxy(
-					this.config.table[Table.Symbol.Columns],
+					getTableShape(this.config.table),
 					new SelectionProxyHandler({ sqlAliasedBehavior: 'alias', sqlBehavior: 'sql' }),
 				) as any,
 			);

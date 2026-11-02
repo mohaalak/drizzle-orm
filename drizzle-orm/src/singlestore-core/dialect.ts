@@ -1,6 +1,7 @@
 import { aliasedTable, aliasedTableSQL, getOriginalColumnFromAlias } from '~/alias.ts';
 import { CodecsCollection } from '~/codecs.ts';
 import { Column } from '~/column.ts';
+import { expandInsertColumnList } from '~/embed.ts';
 import { entityKind, is } from '~/entity.ts';
 import { DrizzleError } from '~/errors.ts';
 import type { MigrationConfig, MigrationMeta, MigratorInitFailResponse } from '~/migrator.ts';
@@ -732,8 +733,9 @@ export class SingleStoreDialect {
 	} {
 		// const isSingleValue = values.length === 1;
 		const columns: Record<string, SingleStoreColumn> = table[Table.Symbol.Columns];
-		const colEntries: [string, SingleStoreColumn][] = columnList
-			? columnList.map((name) => [name, columns[name]!] as [string, SingleStoreColumn])
+		const insertColumnList = columnList && expandInsertColumnList(table, columnList);
+		const colEntries: [string, SingleStoreColumn][] = insertColumnList
+			? insertColumnList.map((name) => [name, columns[name]!] as [string, SingleStoreColumn])
 			: Object.entries(
 				columns,
 			).filter(([_, col]) => !col.shouldDisableInsert());

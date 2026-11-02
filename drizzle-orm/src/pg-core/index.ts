@@ -6,6 +6,7 @@ export * from './checks.ts';
 export * from './codecs.ts';
 export * from './columns/index.ts';
 export * from './dialect.ts';
+export * from './embed.ts';
 export * from './foreign-keys.ts';
 export * from './indexes.ts';
 export * from './policies.ts';

@@ -33,7 +33,9 @@ export function getTableConfig(table: MsSqlTable) {
 	const extraConfigBuilder = table[MsSqlTable.Symbol.ExtraConfigBuilder];
 
 	if (extraConfigBuilder !== undefined) {
-		const extraConfig = extraConfigBuilder(table[MsSqlTable.Symbol.Columns]);
+		const extraConfig = extraConfigBuilder(
+			table[Table.Symbol.ExtraConfigColumns] as Parameters<typeof extraConfigBuilder>[0],
+		);
 		const extraValues = Array.isArray(extraConfig) ? extraConfig.flat(1) as any[] : Object.values(extraConfig);
 		for (const builder of extraValues) {
 			if (is(builder, IndexBuilder)) {

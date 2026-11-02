@@ -12,7 +12,14 @@ export interface MigrationConfig {
 	migrationsFolder: string;
 	migrationsTable?: string;
 	migrationsSchema?: string;
-	/** @internal */
+	/**
+	 * Baselines a database whose schema already exists: records the folder's only migration as applied
+	 * without running it. `drizzle-kit pull --init` passes it after writing that migration.
+	 *
+	 * Nothing is written, and `migrate()` returns a {@link MigratorInitFailResponse} instead, when the
+	 * database already has migrations recorded (`'databaseMigrations'`) or the folder holds more than one
+	 * migration (`'localMigrations'`).
+	 */
 	init?: boolean;
 }
 

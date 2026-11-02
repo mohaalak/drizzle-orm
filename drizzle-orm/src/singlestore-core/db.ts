@@ -1,4 +1,5 @@
 import type { Cache } from '~/cache/core/cache.ts';
+import type { InsertColumnListArg, InsertColumnListKey, ResolvedInsertColumnList } from '~/embed.ts';
 import { entityKind, is } from '~/entity.ts';
 import type { TypedQueryBuilder } from '~/query-builders/query-builder.ts';
 import type { AnyRelations, EmptyRelations } from '~/relations.ts';
@@ -6,12 +7,10 @@ import { SelectionProxyHandler } from '~/selection-proxy.ts';
 import type { SingleStoreDriverDatabase } from '~/singlestore/driver.ts';
 import { type ColumnsSelection, type SQL, sql, type SQLWrapper } from '~/sql/sql.ts';
 import { WithSubquery } from '~/subquery.ts';
-import type { InferInsertModel, RequiredInsertKeys } from '~/table.ts';
-import type { DrizzleTypeError, IsNever, JoinUnion } from '~/utils.ts';
+import type { InferInsertColumns, RequiredInsertKeys } from '~/table.ts';
 import type { SingleStoreDialect } from './dialect.ts';
 import { SingleStoreCountBuilder } from './query-builders/count.ts';
 import {
-	type NoDuplicateColumns,
 	QueryBuilder,
 	SingleStoreDeleteBase,
 	SingleStoreInsertBuilder,
@@ -449,20 +448,17 @@ export class SingleStoreDatabase<
 	 */
 	insert<
 		TTable extends SingleStoreTable,
-		TColumnList extends (keyof InferInsertModel<TTable>)[] = [],
+		TColumnList extends InsertColumnListKey<InferInsertColumns<TTable>>[] = [],
 		TRequiredKeys extends string = RequiredInsertKeys<TTable>,
 	>(
 		table: TTable,
-		...columns: TColumnList extends [] ? []
-			: IsNever<TRequiredKeys> extends true ? TColumnList & NoDuplicateColumns<TColumnList>
-			: [TRequiredKeys] extends [TColumnList[number]] ? TColumnList & NoDuplicateColumns<TColumnList>
-			: DrizzleTypeError<
-				`Column selection is missing following required columns: ${JoinUnion<
-					`"${Exclude<TRequiredKeys, TColumnList[number]>}"`,
-					', '
-				>}`
-			>[]
-	): SingleStoreInsertBuilder<TTable, TQueryResult, TPreparedQueryHKT, TColumnList extends [] ? 'all' : TColumnList>;
+		...columns: InsertColumnListArg<InferInsertColumns<TTable>, TColumnList, TRequiredKeys>
+	): SingleStoreInsertBuilder<
+		TTable,
+		TQueryResult,
+		TPreparedQueryHKT,
+		ResolvedInsertColumnList<InferInsertColumns<TTable>, TColumnList>
+	>;
 	insert<TTable extends SingleStoreTable>(
 		table: TTable,
 		...columns: string[]
