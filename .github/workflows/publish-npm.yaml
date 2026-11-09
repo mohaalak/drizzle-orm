@@ -1,8 +1,9 @@
 # Publishes our fork's drizzle-orm (with embed() and taggedUnion()) to npmjs as @pressnxpress/drizzle-orm.
 # Release: push a tag `pxp-v<version>`, e.g. `pxp-v1.0.0-rc.5.pxp.4`. See skills/drizzle-embedded/SKILL.md, "Installing and releasing the fork".
 #
-# Auth: npm trusted publishing (OIDC) once it is configured for the package on npmjs.com; until then the
-# `NPM_TOKEN` repository secret. npm >= 11.5.1 tries OIDC first and falls back to NODE_AUTH_TOKEN.
+# Auth: npm trusted publishing (OIDC), no token. On npmjs.com the package's trusted publisher is GitHub
+# Actions, repo mohaalak/drizzle-orm, workflow `publish-npm.yaml`, with `npm publish` allowed (newer
+# configs allow only `npm stage publish` by default, which needs a manual approval per release).
 name: Publish to npm
 
 on:
@@ -55,7 +56,7 @@ jobs:
           node-version: '22'
           registry-url: 'https://registry.npmjs.org'
 
-      # Node 22 ships npm 10; trusted publishing needs npm >= 11.5.1. Pinned to major 11 like upstream:
+      # Node 22 ships npm 10; trusted publishing needs npm >= 11.5.1 and Node >= 22.14. Pinned to major 11 like upstream:
       # the npm 12.0.0 tarball is missing `sigstore` and breaks `npm publish`.
       - name: Update npm
         run: npm install -g npm@11
@@ -101,8 +102,6 @@ jobs:
 
       - name: Publish
         working-directory: drizzle-orm
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           npm publish package.tgz --access public --provenance --tag latest
           echo "Published \`@pressnxpress/drizzle-orm@${{ steps.version.outputs.version }}\`" >> "$GITHUB_STEP_SUMMARY"
