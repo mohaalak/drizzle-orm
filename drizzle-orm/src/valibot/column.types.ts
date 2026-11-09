@@ -101,31 +101,33 @@ export type GetValibotTypeFromColumn<
 
 type HandleSelectColumn<
 	TSchema extends v.GenericSchema,
-	TColumn extends Column,
-> = TColumn['_']['notNull'] extends true ? TSchema
+	TNotNull,
+> = TNotNull extends true ? TSchema
 	: v.NullableSchema<TSchema, undefined>;
 
 type HandleInsertColumn<
 	TSchema extends v.GenericSchema,
 	TColumn extends Column,
-> = TColumn['_']['notNull'] extends true
-	? TColumn['_']['hasDefault'] extends true ? v.OptionalSchema<TSchema, undefined>
+	TNotNull,
+> = TNotNull extends true ? TColumn['_']['hasDefault'] extends true ? v.OptionalSchema<TSchema, undefined>
 	: TSchema
 	: v.OptionalSchema<v.NullableSchema<TSchema, undefined>, undefined>;
 
 type HandleUpdateColumn<
 	TSchema extends v.GenericSchema,
-	TColumn extends Column,
-> = TColumn['_']['notNull'] extends true ? v.OptionalSchema<TSchema, undefined>
+	TNotNull,
+> = TNotNull extends true ? v.OptionalSchema<TSchema, undefined>
 	: v.OptionalSchema<v.NullableSchema<TSchema, undefined>, undefined>;
 
+/** @param TNotNull whether the column is `NOT NULL`; a `taggedUnion()` variant's column passes its declared nullability */
 export type HandleColumn<
 	TType extends 'select' | 'insert' | 'update',
 	TColumn extends Column,
+	TNotNull = TColumn['_']['notNull'],
 > = GetValibotTypeFromColumn<TColumn> extends infer TSchema extends v.GenericSchema
 	? TSchema extends v.AnySchema ? v.AnySchema
-	: TType extends 'select' ? HandleSelectColumn<TSchema, TColumn>
-	: TType extends 'insert' ? HandleInsertColumn<TSchema, TColumn>
-	: TType extends 'update' ? HandleUpdateColumn<TSchema, TColumn>
+	: TType extends 'select' ? HandleSelectColumn<TSchema, TNotNull>
+	: TType extends 'insert' ? HandleInsertColumn<TSchema, TColumn, TNotNull>
+	: TType extends 'update' ? HandleUpdateColumn<TSchema, TNotNull>
 	: TSchema
 	: v.AnySchema;

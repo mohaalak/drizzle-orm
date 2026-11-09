@@ -1,4 +1,5 @@
 import type { Cache } from '~/cache/core/cache.ts';
+import type { InsertColumnListArg, InsertColumnListKey, ResolvedInsertColumnList } from '~/embed.ts';
 import { entityKind, is } from '~/entity.ts';
 import type { TypedQueryBuilder } from '~/query-builders/query-builder.ts';
 import type { AnyRelations, EmptyRelations } from '~/relations.ts';
@@ -12,7 +13,6 @@ import type { Result, SQLiteAsyncSession, SQLiteAsyncTransaction } from '~/sqlit
 import { SQLiteAsyncUpdateBase, type SQLiteAsyncUpdateBuilder } from '~/sqlite-core/async/update.ts';
 import type { SQLiteDialect } from '~/sqlite-core/dialect.ts';
 import {
-	type NoDuplicateColumns,
 	QueryBuilder,
 	SQLiteInsertBuilder,
 	SQLiteSelectBuilder,
@@ -21,8 +21,8 @@ import {
 import type { SQLiteTransactionConfig } from '~/sqlite-core/session.ts';
 import type { SQLiteTable } from '~/sqlite-core/table.ts';
 import { WithSubquery } from '~/subquery.ts';
-import type { InferInsertModel, RequiredInsertKeys } from '~/table.ts';
-import type { DrizzleTypeError, IsNever, JoinUnion } from '~/utils.ts';
+import type { InferInsertColumns, RequiredInsertKeys } from '~/table.ts';
+import type { DrizzleTypeError } from '~/utils.ts';
 import { RelationalQueryBuilder } from '../query-builders/query.ts';
 import type { SelectedFields } from '../query-builders/select.types.ts';
 import type { WithBuilder } from '../subquery.ts';
@@ -343,20 +343,17 @@ export class SQLiteAsyncDatabase<
 		 */
 		function insert<
 			TTable extends SQLiteTable,
-			TColumnList extends (keyof InferInsertModel<TTable>)[] = [],
+			TColumnList extends InsertColumnListKey<InferInsertColumns<TTable>>[] = [],
 			TRequiredKeys extends string = RequiredInsertKeys<TTable>,
 		>(
 			into: TTable,
-			...columns: TColumnList extends [] ? []
-				: IsNever<TRequiredKeys> extends true ? TColumnList & NoDuplicateColumns<TColumnList>
-				: [TRequiredKeys] extends [TColumnList[number]] ? TColumnList & NoDuplicateColumns<TColumnList>
-				: DrizzleTypeError<
-					`Column selection is missing following required columns: ${JoinUnion<
-						`"${Exclude<TRequiredKeys, TColumnList[number]>}"`,
-						', '
-					>}`
-				>[]
-		): SQLiteAsyncInsertBuilder<TTable, TResultKind, TRunResult, TColumnList extends [] ? 'all' : TColumnList>;
+			...columns: InsertColumnListArg<InferInsertColumns<TTable>, TColumnList, TRequiredKeys>
+		): SQLiteAsyncInsertBuilder<
+			TTable,
+			TResultKind,
+			TRunResult,
+			ResolvedInsertColumnList<InferInsertColumns<TTable>, TColumnList>
+		>;
 		function insert<TTable extends SQLiteTable>(
 			into: TTable,
 			...columns: string[]
@@ -551,20 +548,17 @@ export class SQLiteAsyncDatabase<
 	 */
 	insert<
 		TTable extends SQLiteTable,
-		TColumnList extends (keyof InferInsertModel<TTable>)[] = [],
+		TColumnList extends InsertColumnListKey<InferInsertColumns<TTable>>[] = [],
 		TRequiredKeys extends string = RequiredInsertKeys<TTable>,
 	>(
 		into: TTable,
-		...columns: TColumnList extends [] ? []
-			: IsNever<TRequiredKeys> extends true ? TColumnList & NoDuplicateColumns<TColumnList>
-			: [TRequiredKeys] extends [TColumnList[number]] ? TColumnList & NoDuplicateColumns<TColumnList>
-			: DrizzleTypeError<
-				`Column selection is missing following required columns: ${JoinUnion<
-					`"${Exclude<TRequiredKeys, TColumnList[number]>}"`,
-					', '
-				>}`
-			>[]
-	): SQLiteAsyncInsertBuilder<TTable, TResultKind, TRunResult, TColumnList extends [] ? 'all' : TColumnList>;
+		...columns: InsertColumnListArg<InferInsertColumns<TTable>, TColumnList, TRequiredKeys>
+	): SQLiteAsyncInsertBuilder<
+		TTable,
+		TResultKind,
+		TRunResult,
+		ResolvedInsertColumnList<InferInsertColumns<TTable>, TColumnList>
+	>;
 	insert<TTable extends SQLiteTable>(
 		into: TTable,
 		...columns: string[]

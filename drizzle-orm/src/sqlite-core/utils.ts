@@ -1,3 +1,4 @@
+import { getTableShape } from '~/embed.ts';
 import { is } from '~/entity.ts';
 import type { AnyRelations } from '~/relations.ts';
 import { Table } from '~/table.ts';
@@ -8,6 +9,7 @@ import type { ViewConfig } from '~/view.ts';
 import type { Check } from './checks.ts';
 import { CheckBuilder } from './checks.ts';
 import type { SQLiteCodecs } from './codecs.ts';
+import type { SQLiteColumn } from './columns/common.ts';
 import type { ForeignKey } from './foreign-keys.ts';
 import { ForeignKeyBuilder } from './foreign-keys.ts';
 import type { Index } from './indexes.ts';
@@ -30,7 +32,7 @@ export function getTableConfig<TTable extends SQLiteTable>(table: TTable) {
 	const extraConfigBuilder = table[SQLiteTable.Symbol.ExtraConfigBuilder];
 
 	if (extraConfigBuilder !== undefined) {
-		const extraConfig = extraConfigBuilder(table[SQLiteTable.Symbol.Columns]);
+		const extraConfig = extraConfigBuilder(getTableShape(table) as Record<string, SQLiteColumn>);
 		const extraValues = Array.isArray(extraConfig) ? extraConfig.flat(1) as any[] : Object.values(extraConfig);
 		for (const builder of Object.values(extraValues)) {
 			if (is(builder, IndexBuilder)) {

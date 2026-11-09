@@ -1,11 +1,11 @@
+import type { InsertColumnListArg, InsertColumnListKey, ResolvedInsertColumnList } from '~/embed.ts';
 import { entityKind, is } from '~/entity.ts';
 import type { TypedQueryBuilder } from '~/query-builders/query-builder.ts';
 import type { AnyRelations, EmptyRelations } from '~/relations.ts';
 import { SelectionProxyHandler } from '~/selection-proxy.ts';
 import { type ColumnsSelection, type SQL, sql, type SQLWrapper } from '~/sql/sql.ts';
 import { WithSubquery } from '~/subquery.ts';
-import type { InferInsertModel, RequiredInsertKeys } from '~/table.ts';
-import type { DrizzleTypeError, IsNever, JoinUnion } from '~/utils.ts';
+import type { InferInsertColumns, RequiredInsertKeys } from '~/table.ts';
 import type { MsSqlDialect } from './dialect.ts';
 import { MsSqlCountBuilder } from './query-builders/count.ts';
 import {
@@ -13,7 +13,6 @@ import {
 	MsSqlInsertBuilder,
 	MsSqlSelectBuilder,
 	MsSqlUpdateBuilder,
-	type NoDuplicateColumns,
 	QueryBuilder,
 } from './query-builders/index.ts';
 import { RelationalQueryBuilder } from './query-builders/query.ts';
@@ -320,25 +319,17 @@ export class MsSqlDatabase<
 	 */
 	insert<
 		TTable extends MsSqlTable,
-		TColumnList extends (keyof InferInsertModel<TTable>)[] = [],
+		TColumnList extends InsertColumnListKey<InferInsertColumns<TTable>>[] = [],
 		TRequiredKeys extends string = RequiredInsertKeys<TTable>,
 	>(
 		table: TTable,
-		...columns: TColumnList extends [] ? []
-			: IsNever<TRequiredKeys> extends true ? TColumnList & NoDuplicateColumns<TColumnList>
-			: [TRequiredKeys] extends [TColumnList[number]] ? TColumnList & NoDuplicateColumns<TColumnList>
-			: DrizzleTypeError<
-				`Column selection is missing following required columns: ${JoinUnion<
-					`"${Exclude<TRequiredKeys, TColumnList[number]>}"`,
-					', '
-				>}`
-			>[]
+		...columns: InsertColumnListArg<InferInsertColumns<TTable>, TColumnList, TRequiredKeys>
 	): MsSqlInsertBuilder<
 		TTable,
 		TQueryResult,
 		TPreparedQueryHKT,
 		undefined,
-		TColumnList extends [] ? 'all' : TColumnList
+		ResolvedInsertColumnList<InferInsertColumns<TTable>, TColumnList>
 	>;
 	insert<TTable extends MsSqlTable>(
 		table: TTable,

@@ -1,0 +1,107 @@
+# Publishes our fork's drizzle-orm (with embed() and taggedUnion()) to npmjs as @pressnxpress/drizzle-orm.
+# Release: push a tag `pxp-v<version>`, e.g. `pxp-v1.0.0-rc.5.pxp.4`. See skills/drizzle-embedded/SKILL.md, "Installing and releasing the fork".
+#
+# Auth: npm trusted publishing (OIDC), no token. On npmjs.com the package's trusted publisher is GitHub
+# Actions, repo mohaalak/drizzle-orm, workflow `publish-npm.yaml`, with `npm publish` allowed (newer
+# configs allow only `npm stage publish` by default, which needs a manual approval per release).
+name: Publish to npm
+
+on:
+  push:
+    tags:
+      - 'pxp-v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to publish, e.g. 1.0.0-rc.5.pxp.4. Leave empty when running on a pxp-v* tag.'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  id-token: write # trusted publishing and provenance
+
+concurrency:
+  group: publish-npm
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve version
+        id: version
+        shell: bash
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          version="$INPUT_VERSION"
+          if [[ -z "$version" && "$GITHUB_REF_TYPE" == "tag" && "$GITHUB_REF_NAME" == pxp-v* ]]; then
+            version="${GITHUB_REF_NAME#pxp-v}"
+          fi
+          if [[ -z "$version" ]]; then
+            echo "::error::No version: push a pxp-v<version> tag or pass the version input."
+            exit 1
+          fi
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::'$version' is not a semver version."
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+
+      # Node 22 ships npm 10; trusted publishing needs npm >= 11.5.1 and Node >= 22.14. Pinned to major 11 like upstream:
+      # the npm 12.0.0 tarball is missing `sigstore` and breaks `npm publish`.
+      - name: Update npm
+        run: npm install -g npm@11
+
+      - uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - name: Install Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build drizzle-orm
+        run: pnpm build:orm
+
+      - name: Type tests
+        working-directory: drizzle-orm
+        run: pnpm test:types
+
+      # Renames only the published manifest (dist/package.json); the source package stays `drizzle-orm`
+      # so workspace references keep working. `repository` must match this repo for provenance and
+      # trusted publishing. Peer dependencies stay: npmjs serves `peerDependenciesMeta`, so pnpm treats
+      # the drivers and validators as optional.
+      - name: Rewrite published manifest
+        working-directory: drizzle-orm/dist
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          jq --arg v "$VERSION" '
+            .name = "@pressnxpress/drizzle-orm"
+            | .version = $v
+            | .repository = { type: "git", url: "git+https://github.com/mohaalak/drizzle-orm.git", directory: "drizzle-orm" }
+            | .publishConfig = { registry: "https://registry.npmjs.org", access: "public" }
+          ' package.json > package.json.tmp
+          mv package.json.tmp package.json
+          jq '{ name, version, repository, publishConfig, dependencies }' package.json
+
+      - name: Pack
+        working-directory: drizzle-orm
+        run: npm run pack
+
+      - name: Publish
+        working-directory: drizzle-orm
+        run: |
+          npm publish package.tgz --access public --provenance --tag latest
+          echo "Published \`@pressnxpress/drizzle-orm@${{ steps.version.outputs.version }}\`" >> "$GITHUB_STEP_SUMMARY"

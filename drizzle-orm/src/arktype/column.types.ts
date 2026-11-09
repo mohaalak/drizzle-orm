@@ -16,27 +16,30 @@ export type GetArktypeType<
 
 type HandleSelectColumn<
 	TSchema,
-	TColumn extends Column,
-> = TColumn['_']['notNull'] extends true ? TSchema
+	TNotNull,
+> = TNotNull extends true ? TSchema
 	: ArktypeNullable<TSchema>;
 
 type HandleInsertColumn<
 	TSchema,
 	TColumn extends Column,
-> = TColumn['_']['notNull'] extends true ? TColumn['_']['hasDefault'] extends true ? ArktypeOptional<TSchema>
+	TNotNull,
+> = TNotNull extends true ? TColumn['_']['hasDefault'] extends true ? ArktypeOptional<TSchema>
 	: TSchema
 	: ArktypeOptional<ArktypeNullable<TSchema>>;
 
 type HandleUpdateColumn<
 	TSchema,
-	TColumn extends Column,
-> = TColumn['_']['notNull'] extends true ? ArktypeOptional<TSchema>
+	TNotNull,
+> = TNotNull extends true ? ArktypeOptional<TSchema>
 	: ArktypeOptional<ArktypeNullable<TSchema>>;
 
+/** @param TNotNull whether the column is `NOT NULL`; a `taggedUnion()` variant's column passes its declared nullability */
 export type HandleColumn<
 	TType extends 'select' | 'insert' | 'update',
 	TColumn extends Column,
-> = TType extends 'select' ? HandleSelectColumn<GetArktypeType<TColumn>, TColumn>
-	: TType extends 'insert' ? HandleInsertColumn<GetArktypeType<TColumn>, TColumn>
-	: TType extends 'update' ? HandleUpdateColumn<GetArktypeType<TColumn>, TColumn>
+	TNotNull = TColumn['_']['notNull'],
+> = TType extends 'select' ? HandleSelectColumn<GetArktypeType<TColumn>, TNotNull>
+	: TType extends 'insert' ? HandleInsertColumn<GetArktypeType<TColumn>, TColumn, TNotNull>
+	: TType extends 'update' ? HandleUpdateColumn<GetArktypeType<TColumn>, TNotNull>
 	: GetArktypeType<TColumn>;

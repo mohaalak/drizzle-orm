@@ -20,7 +20,7 @@ import type {
 	Table,
 	TableConfigT,
 } from './types/tables.ts';
-import { isRelationCyclic } from './utils.ts';
+import { getFlatColumns, getTableUnions, isRelationCyclic } from './utils.ts';
 
 const getTableConfig = (
 	table: DrizzleTable,
@@ -139,7 +139,9 @@ export const getSchemaInfo = (
 		const dbToTsColumnNamesMap: { [dbColName: string]: string } = {};
 
 		const tableConfig = getTableConfig(table);
-		for (const [tsCol, col] of Object.entries(getColumnTable(tableConfig.columns[0]!))) {
+		// read the flat column map rather than the table object: an `embed()` group is nested on the object, while the
+		// map keeps its columns under dotted keys (`'address.city'`), which is how the seed names them
+		for (const [tsCol, col] of Object.entries(getFlatColumns(getColumnTable(tableConfig.columns[0]!)))) {
 			if (is(col, DrizzleColumn)) dbToTsColumnNamesMap[col.name] = tsCol;
 		}
 		dbToTsColumnNamesMapGlobal.set(table, dbToTsColumnNamesMap);
@@ -211,6 +213,8 @@ export const getSchemaInfo = (
 			),
 			columns: mapColumns(tableConfig.columns, dbToTsColumnNamesMap),
 		};
+		const unions = getTableUnions(table);
+		if (unions !== undefined) mappedTable.unions = unions;
 		tables.push(mappedTable);
 	}
 

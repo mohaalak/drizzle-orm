@@ -1,0 +1,507 @@
+import { beforeAll, describe, expect, test } from 'vitest';
+import { alias, camelCase, embed, getTableConfig, index, integer, pgTable, serial, snakeCase, text } from '~/pg-core';
+import { drizzle } from '~/pglite';
+import { defineRelations } from '~/relations';
+import { asc, eq, sql } from '~/sql';
+
+const users = pgTable('users', {
+	id: serial().primaryKey(),
+	name: text().notNull(),
+	address: embed({
+		street: text(),
+		city: text().notNull(),
+		geo: embed({
+			lat: integer(),
+			lng: integer(),
+		}),
+	}),
+	billing: embed({
+		zip: text('billing_zip_code'),
+	}, { prefix: 'bill_' }),
+}, (t) => [index('users_city_idx').on(t.address.city)]);
+
+const src = pgTable('src_embed', {
+	name: text().notNull(),
+	city: text().notNull(),
+	lat: integer(),
+});
+
+const db = drizzle('memory://');
+
+beforeAll(async () => {
+	await db.execute(sql`
+		create table users (
+			id serial primary key,
+			name text not null,
+			address_street text,
+			address_city text not null,
+			address_geo_lat integer,
+			address_geo_lng integer,
+			billing_zip_code text
+		)
+	`);
+});
+
+describe('embed', () => {
+	test('flattens groups into prefixed columns', () => {
+		const { columns, indexes } = getTableConfig(users);
+		expect(columns.map((column) => column.name)).toEqual([
+			'id',
+			'name',
+			'address_street',
+			'address_city',
+			'address_geo_lat',
+			'address_geo_lng',
+			'billing_zip_code',
+		]);
+		expect(columns.find((column) => column.name === 'address_city')!.notNull).toBe(true);
+		expect(indexes[0]!.config.columns.map((column) => (column as any).name)).toEqual(['address_city']);
+	});
+
+	test('exposes groups as nested columns', () => {
+		expect(users.address.city.name).toBe('address_city');
+		expect(users.address.geo.lat.name).toBe('address_geo_lat');
+		expect(db.select().from(users).where(eq(users.address.city, 'Berlin')).toSQL().sql).toBe(
+			'select "id", "name", "address_street", "address_city", "address_geo_lat", "address_geo_lng", "billing_zip_code" from "users" where "users"."address_city" = $1',
+		);
+	});
+
+	test('insert takes nested values and returns nested rows', async () => {
+		const [inserted] = await db.insert(users).values({
+			name: 'Ada',
+			address: { street: 'Main St', city: 'Berlin', geo: { lat: 52, lng: 13 } },
+			billing: { zip: '10115' },
+		}).returning();
+
+		expect(inserted).toEqual({
+			id: 1,
+			name: 'Ada',
+			address: { street: 'Main St', city: 'Berlin', geo: { lat: 52, lng: 13 } },
+			billing: { zip: '10115' },
+		});
+
+		await db.insert(users).values({ name: 'Bob', address: { city: 'Paris' } });
+
+		const rows = await db.select().from(users).orderBy(asc(users.id));
+		expect(rows).toEqual([
+			inserted,
+			{
+				id: 2,
+				name: 'Bob',
+				address: { street: null, city: 'Paris', geo: { lat: null, lng: null } },
+				billing: { zip: null },
+			},
+		]);
+	});
+
+	test('update sets nested values, and null clears a group', async () => {
+		const [updated] = await db.update(users)
+			.set({ address: { city: 'Rome', geo: null }, billing: null })
+			.where(eq(users.id, 1))
+			.returning({ id: users.id, address: users.address });
+
+		expect(updated).toEqual({
+			id: 1,
+			address: { street: 'Main St', city: 'Rome', geo: { lat: null, lng: null } },
+		});
+		expect(await db.select({ zip: users.billing.zip }).from(users).where(eq(users.id, 1))).toEqual([{ zip: null }]);
+	});
+
+	test('partial selects can pick a group or a column inside one', async () => {
+		const rows = await db.select({ name: users.name, address: users.address, lat: users.address.geo.lat })
+			.from(users)
+			.where(eq(users.id, 2));
+
+		expect(rows).toEqual([{
+			name: 'Bob',
+			address: { street: null, city: 'Paris', geo: { lat: null, lng: null } },
+			lat: null,
+		}]);
+	});
+
+	test('joins nest groups under the table, and a missing joined row is null', async () => {
+		const other = alias(users, 'other');
+		const rows = await db.select().from(users)
+			.leftJoin(other, eq(other.address.city, sql`'Nowhere'`))
+			.where(eq(users.id, 2));
+
+		expect(rows).toEqual([{
+			users: {
+				id: 2,
+				name: 'Bob',
+				address: { street: null, city: 'Paris', geo: { lat: null, lng: null } },
+				billing: { zip: null },
+			},
+			other: null,
+		}]);
+	});
+
+	test('aliases reference their own table inside groups', () => {
+		const other = alias(users, 'other');
+		expect(db.select({ city: other.address.city }).from(other).toSQL().sql).toBe(
+			'select "address_city" from "users" "other"',
+		);
+		expect(db.select().from(users).innerJoin(other, eq(other.address.city, users.address.city)).toSQL().sql)
+			.toContain('on "other"."address_city" = "users"."address_city"');
+	});
+
+	test('rejects a group written as something other than an object', () => {
+		expect(() => db.insert(users).values({ name: 'X', address: sql`null` as any })).toThrow(
+			'Embedded group "address" in table "users" must be written as an object of its columns',
+		);
+	});
+
+	test('table casing applies to the prefixed name', () => {
+		const definition = () => ({
+			homeAddress: embed({ zipCode: text(), streetName: text('street') }),
+		});
+		expect(getTableConfig(snakeCase.table('t', definition())).columns.map((column) => column.name)).toEqual([
+			'home_address_zip_code',
+			'street',
+		]);
+		expect(getTableConfig(camelCase.table('t', definition())).columns.map((column) => column.name)).toEqual([
+			'homeAddressZipCode',
+			'street',
+		]);
+		expect(getTableConfig(pgTable('t', definition())).columns.map((column) => column.name)).toEqual([
+			'homeAddress_zipCode',
+			'street',
+		]);
+	});
+
+	test('tables without groups are unaffected', () => {
+		const plain = pgTable('plain', { id: serial().primaryKey(), cityId: integer() });
+		expect(Object.keys(plain)).toContain('cityId');
+		expect(db.insert(plain).values({ cityId: 1 }).toSQL().sql).toBe(
+			'insert into "plain" ("id", "cityId") values (default, $1)',
+		);
+	});
+
+	test('nests a selected table in subqueries', async () => {
+		await db.insert(users).values({ name: 'Sub', address: { city: 'Lyon', geo: { lat: 4 } } });
+		const sq = db.select({ user: users }).from(users).where(eq(users.name, 'Sub')).as('sq');
+
+		expect(sq.user.address.geo.lat.name).toBe('address_geo_lat');
+		const rows = await db.select({ city: sq.user.address.city, lat: sq.user.address.geo.lat }).from(sq);
+		expect(rows).toStrictEqual([{ city: 'Lyon', lat: 4 }]);
+	});
+
+	test('insert and delete return whole groups', async () => {
+		const [inserted] = await db.insert(users).values({ name: 'Ret', address: { city: 'Rome' } }).returning({
+			address: users.address,
+		});
+		expect(inserted).toStrictEqual({ address: { street: null, city: 'Rome', geo: { lat: null, lng: null } } });
+
+		const deleted = await db.delete(users).where(eq(users.name, 'Ret')).returning({ geo: users.address.geo });
+		expect(deleted).toStrictEqual([{ geo: { lat: null, lng: null } }]);
+	});
+
+	test('insert select takes a nested group, a partial group, a callback, and dotted keys', () => {
+		expect(
+			db.insert(users).select(
+				db.select({
+					address: { city: src.city, geo: { lat: src.lat } },
+					name: src.name,
+				}).from(src).where(eq(src.name, 'Bob')),
+			).toSQL(),
+		).toEqual({
+			sql:
+				'insert into "users" ("address_city", "address_geo_lat", "name") select "city", "lat", "name" from "src_embed" where "src_embed"."name" = $1',
+			params: ['Bob'],
+		});
+
+		expect(db.insert(users).select(db.select({ name: src.name, address: { city: src.city } }).from(src)).toSQL().sql)
+			.toBe('insert into "users" ("name", "address_city") select "name", "city" from "src_embed"');
+
+		expect(
+			db.insert(users).select((qb) => qb.select({ name: src.name, address: { city: src.city } }).from(src)).toSQL()
+				.sql,
+		).toBe('insert into "users" ("name", "address_city") select "name", "city" from "src_embed"');
+
+		expect(db.insert(users).select(db.select({ name: src.name, 'address.city': src.city }).from(src)).toSQL().sql)
+			.toBe('insert into "users" ("name", "address_city") select "name", "city" from "src_embed"');
+
+		expect(() => db.insert(users).select(db.select({ name: src.name, address: { country: src.city } }).from(src)))
+			.toThrow('Insert select error: column "address.country" does not exist in table "users"');
+
+		expect(db.insert(users).select(db.select({ name: users.name, address: users.address }).from(users)).toSQL().sql)
+			.toBe(
+				'insert into "users" ("name", "address_street", "address_city", "address_geo_lat", "address_geo_lng") select "name", "address_street", "address_city", "address_geo_lat", "address_geo_lng" from "users"',
+			);
+
+		expect(db.insert(users).select(db.select().from(users)).toSQL().sql).toBe(
+			'insert into "users" ("id", "name", "address_street", "address_city", "address_geo_lat", "address_geo_lng", "billing_zip_code") select "id", "name", "address_street", "address_city", "address_geo_lat", "address_geo_lng", "billing_zip_code" from "users"',
+		);
+
+		const plain = pgTable('plain_embed', { id: serial().primaryKey(), cityId: integer() });
+		expect(db.insert(plain).select(db.select({ cityId: plain.cityId }).from(plain)).toSQL().sql).toBe(
+			'insert into "plain_embed" ("cityId") select "cityId" from "plain_embed"',
+		);
+
+		expect(db.insert(users).select(sql`select 1`).toSQL().sql).toBe(
+			'insert into "users" ("id", "name", "address_street", "address_city", "address_geo_lat", "address_geo_lng", "billing_zip_code") select 1',
+		);
+	});
+
+	test('insert select writes the nested selection', async () => {
+		await db.execute(sql`drop table if exists src_embed`);
+		await db.execute(sql`create table src_embed (name text not null, city text not null, lat integer)`);
+		await db.insert(src).values({ name: 'Dst', city: 'Paris', lat: 52 });
+
+		await db.insert(users).select(
+			db.select({
+				address: { city: src.city, geo: { lat: src.lat } },
+				name: src.name,
+			}).from(src),
+		);
+
+		expect(await db.select({ name: users.name, address: users.address }).from(users).where(eq(users.name, 'Dst')))
+			.toEqual([{
+				name: 'Dst',
+				address: { street: null, city: 'Paris', geo: { lat: 52, lng: null } },
+			}]);
+
+		await db.delete(users).where(eq(users.name, 'Dst'));
+		await db.execute(sql`drop table src_embed`);
+	});
+
+	test('a column list can name an embed() group', () => {
+		expect(
+			db.insert(users, 'name', 'address').values({
+				name: 'Ada',
+				address: { city: 'Berlin', geo: { lat: 1 } },
+			}).toSQL(),
+		).toEqual({
+			sql:
+				'insert into "users" ("name", "address_street", "address_city", "address_geo_lat", "address_geo_lng") values ($1, default, $2, $3, default)',
+			params: ['Ada', 'Berlin', 1],
+		});
+
+		expect(
+			db.insert(users, 'name', 'address.city', 'address.geo').values({
+				name: 'Ada',
+				address: { city: 'Berlin', geo: { lat: 1 } },
+			}).toSQL(),
+		).toEqual({
+			sql:
+				'insert into "users" ("name", "address_city", "address_geo_lat", "address_geo_lng") values ($1, $2, $3, default)',
+			params: ['Ada', 'Berlin', 1],
+		});
+
+		expect(
+			db.insert(users, 'name', 'address.city', 'billing').values({
+				name: 'Ada',
+				address: { city: 'Berlin' },
+				billing: { zip: '10115' },
+			}).toSQL(),
+		).toEqual({
+			sql: 'insert into "users" ("name", "address_city", "billing_zip_code") values ($1, $2, $3)',
+			params: ['Ada', 'Berlin', '10115'],
+		});
+
+		expect(db.insert(users, 'name', 'address.city').values({ name: 'Ada', address: { city: 'Berlin' } }).toSQL())
+			.toEqual({
+				sql: 'insert into "users" ("name", "address_city") values ($1, $2)',
+				params: ['Ada', 'Berlin'],
+			});
+
+		expect(
+			db.insert(users, 'name', 'address').select(
+				db.select({ name: src.name, address: { city: src.city } }).from(src),
+			).toSQL().sql,
+		).toBe('insert into "users" ("name", "address_city") select "name", "city" from "src_embed"');
+
+		// @ts-expect-error - `address` repeats `address.city`
+		expect(() => db.insert(users, 'name', 'address', 'address.city')).toThrow(
+			'Duplicate columns are not allowed in insert selection: "address.city"',
+		);
+		// @ts-expect-error - `address` repeats `address.city`
+		expect(() => db.insert(users, 'name', 'address.city', 'address')).toThrow(
+			'Duplicate columns are not allowed in insert selection: "address"',
+		);
+		// @ts-expect-error - not a column or an embed() group
+		expect(() => db.insert(users, 'name', 'address', 'nope')).toThrow(
+			'Column "nope" does not exist in table "users"',
+		);
+	});
+
+	test('insert writes a group named in the column list', async () => {
+		await db.insert(users, 'name', 'address').values({
+			name: 'ColList',
+			address: { city: 'Berlin', geo: { lat: 1 } },
+		});
+
+		expect(
+			await db.select({ name: users.name, address: users.address }).from(users).where(eq(users.name, 'ColList')),
+		).toEqual([{
+			name: 'ColList',
+			address: { street: null, city: 'Berlin', geo: { lat: 1, lng: null } },
+		}]);
+
+		await db.delete(users).where(eq(users.name, 'ColList'));
+	});
+});
+
+const shops = pgTable('shops', {
+	id: serial().primaryKey(),
+	location: embed({ city: text().notNull(), geo: embed({ lat: integer() }) }),
+});
+
+const orders = pgTable('orders', {
+	id: serial().primaryKey(),
+	shopId: integer().notNull(),
+	delivery: embed({ city: text() }),
+});
+
+const relations = defineRelations({ shops, orders }, (r) => ({
+	shops: { orders: r.many.orders({ from: r.shops.id, to: r.orders.shopId }) },
+	orders: { shop: r.one.shops({ from: r.orders.shopId, to: r.shops.id, optional: false }) },
+}));
+
+describe.each([
+	{ jit: false },
+	{ jit: true },
+])('embed in relational queries (jit: $jit)', ({ jit }) => {
+	const rqb = drizzle('memory://', { relations, jit });
+
+	beforeAll(async () => {
+		await rqb.execute(sql`
+			create table shops (id serial primary key, location_city text not null, location_geo_lat integer)
+		`);
+		await rqb.execute(sql`create table orders (id serial primary key, "shopId" integer not null, delivery_city text)`);
+		await rqb.insert(shops).values({ location: { city: 'Berlin', geo: { lat: 52 } } });
+		await rqb.insert(orders).values([{ shopId: 1, delivery: { city: 'Potsdam' } }, { shopId: 1 }]);
+	});
+
+	test('nests groups in the rows it reads', async () => {
+		expect(await rqb.query.shops.findFirst()).toEqual({ id: 1, location: { city: 'Berlin', geo: { lat: 52 } } });
+	});
+
+	test('nests groups in loaded relations', async () => {
+		const shop = await rqb.query.shops.findFirst({ with: { orders: { orderBy: { id: 'asc' } } } });
+		expect(shop).toEqual({
+			id: 1,
+			location: { city: 'Berlin', geo: { lat: 52 } },
+			orders: [
+				{ id: 1, shopId: 1, delivery: { city: 'Potsdam' } },
+				{ id: 2, shopId: 1, delivery: { city: null } },
+			],
+		});
+
+		const order = await rqb.query.orders.findMany({ with: { shop: true }, orderBy: { id: 'asc' }, limit: 1 });
+		expect(order).toEqual([{
+			id: 1,
+			shopId: 1,
+			delivery: { city: 'Potsdam' },
+			shop: { id: 1, location: { city: 'Berlin', geo: { lat: 52 } } },
+		}]);
+	});
+
+	test('columns, where and orderBy take groups nested', async () => {
+		expect(
+			await rqb.query.shops.findFirst({
+				columns: { location: { geo: true } },
+				where: { location: { city: 'Berlin', geo: { lat: { gt: 0 } } } },
+				with: {
+					orders: {
+						columns: { delivery: true },
+						where: { delivery: { city: { isNotNull: true } } },
+					},
+				},
+			}),
+		).toEqual({ location: { geo: { lat: 52 } }, orders: [{ delivery: { city: 'Potsdam' } }] });
+
+		expect(
+			await rqb.query.orders.findMany({
+				columns: { 'delivery.city': true },
+				where: { shop: { location: { city: 'Berlin' } } },
+				orderBy: { delivery: { city: 'asc' } },
+			}),
+		).toEqual(
+			// nulls sort last in ascending order
+			[{ delivery: { city: 'Potsdam' } }, { delivery: { city: null } }],
+		);
+	});
+
+	test('columns selects groups whole, by their columns, or by dotted keys', async () => {
+		await rqb.insert(shops).values({ location: { city: 'Lima', geo: { lat: -12 } } });
+
+		expect(await rqb.query.shops.findMany({ columns: { location: true }, orderBy: { location: { city: 'asc' } } }))
+			.toEqual([
+				{ location: { city: 'Berlin', geo: { lat: 52 } } },
+				{ location: { city: 'Lima', geo: { lat: -12 } } },
+			]);
+		expect(await rqb.query.shops.findFirst({ columns: { id: true, location: { geo: true } } })).toEqual({
+			id: 1,
+			location: { geo: { lat: 52 } },
+		});
+		expect(await rqb.query.shops.findFirst({ columns: { location: { geo: false } } })).toEqual({
+			id: 1,
+			location: { city: 'Berlin' },
+		});
+		expect(await rqb.query.shops.findFirst({ columns: { 'location.city': true } })).toEqual({
+			location: { city: 'Berlin' },
+		});
+		expect(
+			await rqb.query.shops.findFirst({ columns: { id: true }, with: { orders: { columns: { delivery: true } } } }),
+		).toEqual({ id: 1, orders: [{ delivery: { city: 'Potsdam' } }, { delivery: { city: null } }] });
+
+		await rqb.delete(shops).where(eq(shops.location.city, 'Lima'));
+	});
+
+	test('where filters by group columns', async () => {
+		await rqb.insert(shops).values({ location: { city: 'Lima', geo: { lat: -12 } } });
+		try {
+			const city = { location: { city: true } } as const;
+			expect(await rqb.query.shops.findMany({ where: { location: { city: 'Lima' } }, columns: city })).toEqual([
+				{ location: { city: 'Lima' } },
+			]);
+			expect(await rqb.query.shops.findMany({ where: { location: { geo: { lat: { gt: 0 } } } }, columns: city }))
+				.toEqual([{ location: { city: 'Berlin' } }]);
+			expect(
+				await rqb.query.shops.findMany({
+					where: { location: { OR: [{ city: 'Lima' }, { geo: { lat: 52 } }] } },
+					columns: city,
+					orderBy: { location: { city: 'asc' } },
+				}),
+			).toEqual([{ location: { city: 'Berlin' } }, { location: { city: 'Lima' } }]);
+			expect(
+				await rqb.query.orders.findMany({
+					where: { shop: { location: { city: 'Berlin' } }, delivery: { city: { isNotNull: true } } },
+					columns: { delivery: true },
+				}),
+			).toEqual([{ delivery: { city: 'Potsdam' } }]);
+		} finally {
+			await rqb.delete(shops).where(eq(shops.location.city, 'Lima'));
+		}
+	});
+
+	test('orderBy orders by group columns', async () => {
+		await rqb.insert(shops).values({ location: { city: 'Lima', geo: { lat: -12 } } });
+		try {
+			const city = { location: { city: true } } as const;
+			expect(await rqb.query.shops.findMany({ orderBy: { location: { geo: { lat: 'asc' } } }, columns: city }))
+				.toEqual([{ location: { city: 'Lima' } }, { location: { city: 'Berlin' } }]);
+			expect(await rqb.query.shops.findMany({ orderBy: { location: { city: 'desc' } }, columns: city })).toEqual([
+				{ location: { city: 'Lima' } },
+				{ location: { city: 'Berlin' } },
+			]);
+			expect(
+				await rqb.query.orders.findMany({
+					orderBy: { shop: { location: { city: 'asc' } }, id: 'desc' },
+					columns: { delivery: true },
+				}),
+			).toEqual([{ delivery: { city: null } }, { delivery: { city: 'Potsdam' } }]);
+		} finally {
+			await rqb.delete(shops).where(eq(shops.location.city, 'Lima'));
+		}
+	});
+});
+
+test('a relation cannot share its name with an embed() group', () => {
+	expect(() =>
+		defineRelations({ shops, orders }, (r) => ({
+			orders: { delivery: r.one.shops({ from: r.orders.shopId, to: r.shops.id }) },
+		}))
+	).toThrow('relation name collides with embed() group "delivery"');
+});

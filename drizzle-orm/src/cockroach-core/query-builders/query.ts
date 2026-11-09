@@ -1,3 +1,4 @@
+import { nestEmbeddedRelationalRows } from '~/embed.ts';
 import { entityKind, is } from '~/entity.ts';
 import { QueryPromise } from '~/query-promise.ts';
 import type {
@@ -132,14 +133,17 @@ export class CockroachRelationalQuery<TResult> extends QueryPromise<TResult>
 				builtQuery,
 				'arrays',
 				name ?? generateName,
-				this.mapper ??= dialect.mapperGenerators.relationalRows({
-					isFirst,
-					parseJson: false,
-					parseJsonIfString: false,
-					rootJsonMappers: false,
-					selection: query.selection,
-					arrayModeRoot: true,
-				}),
+				this.mapper ??= nestEmbeddedRelationalRows(
+					dialect.mapperGenerators.relationalRows({
+						isFirst,
+						parseJson: false,
+						parseJsonIfString: false,
+						rootJsonMappers: false,
+						selection: query.selection,
+						arrayModeRoot: true,
+					}),
+					query.selection,
+				),
 			);
 		});
 	}

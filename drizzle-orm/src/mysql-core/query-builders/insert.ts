@@ -1,3 +1,14 @@
+import {
+	expandInsertColumnList,
+	flattenEmbeddedValues,
+	flattenSelectedFields,
+	type HasEmbeddedUnions,
+	type InsertSelectionShape,
+	type ListedInsertColumns,
+	type NestEmbedded,
+	type NestModel,
+	type ValidateNestedInsertSelection,
+} from '~/embed.ts';
 import { entityKind, is } from '~/entity.ts';
 import type { MySqlDialect } from '~/mysql-core/dialect.ts';
 import type { AnyMySqlQueryResultHKT, MySqlQueryResultHKT, MySqlQueryResultKind } from '~/mysql-core/session.ts';
@@ -6,7 +17,7 @@ import type { MySqlTable } from '~/mysql-core/table.ts';
 import type { TypedQueryBuilder } from '~/query-builders/query-builder.ts';
 import type { CommentInput, Placeholder, Query, SQLWrapper } from '~/sql/sql.ts';
 import { SQL, sql } from '~/sql/sql.ts';
-import type { InferInsertModel, InferModelFromColumns } from '~/table.ts';
+import type { InferInsertColumns, InferModelFromColumns } from '~/table.ts';
 import { Table } from '~/table.ts';
 import { type Assume, type DrizzleTypeError, mapUpdateSet } from '~/utils.ts';
 import type { AnyMySqlColumn } from '../columns/common.ts';
@@ -30,29 +41,30 @@ export type AnyMySqlInsertConfig = MySqlInsertConfig<MySqlTable>;
 export type MySqlInsertValue<
 	TTable extends MySqlTable,
 	TColumnsList extends string[] | 'all' = 'all',
-	TModel extends Record<string, any> = InferInsertModel<TTable>,
+	TModel extends Record<string, any> = InferInsertColumns<TTable>,
 > =
-	& {
-		[K in keyof TModel as TColumnsList extends 'all' ? K : Extract<K, TColumnsList[number]>]:
-			| TModel[K]
-			| SQL
-			| Placeholder;
-	}
+	& (HasEmbeddedUnions<TTable['_']['columns']> extends true ? NestModel<
+			TColumnsList extends 'all' ? TTable['_']['columns']
+				: Pick<TTable['_']['columns'], Extract<keyof TTable['_']['columns'], TColumnsList[number]>>,
+			'insert',
+			{ override: false },
+			SQL | Placeholder
+		>
+		: NestEmbedded<
+			{
+				[K in keyof TModel as TColumnsList extends 'all' ? K : Extract<K, TColumnsList[number]>]:
+					| TModel[K]
+					| SQL
+					| Placeholder;
+			}
+		>)
 	& {};
 
 export type MySqlInsertSelection<
 	TTable extends MySqlTable,
 	TColumnsList extends string[] | 'all' = 'all',
-	TModel extends Record<string, unknown> = InferInsertModel<TTable>,
-> =
-	& {
-		[K in keyof TModel as TColumnsList extends 'all' ? K : Extract<K, TColumnsList[number]>]:
-			| AnyMySqlColumn
-			| SQL
-			| SQL.Aliased
-			| TModel[K];
-	}
-	& {};
+	TModel extends Record<string, unknown> = InferInsertColumns<TTable>,
+> = InsertSelectionShape<ListedInsertColumns<TModel, TColumnsList>, AnyMySqlColumn>;
 
 export type NoDuplicateColumns<
 	T extends readonly unknown[],
@@ -68,26 +80,27 @@ export type ValidateInsertSelectionKey<
 	TTable extends MySqlTable,
 	TSelection extends MySqlInsertSelection<any>,
 	K extends keyof TSelection,
-> = K extends keyof InferInsertModel<TTable> ? TSelection[K]
-	: K extends keyof InferInsertModel<TTable, { override: true }> ? DrizzleTypeError<
-			`Column "${
-				& K
-				& string}" in table "${TTable['_'][
-				'name'
-			]}" is a generated column - manual value insertion restricted`
-		>
-	: DrizzleTypeError<`Column "${K & string}" does not exist in table "${TTable['_']['name']}"`>;
+> = ValidateNestedInsertSelection<
+	Pick<TSelection, K>,
+	InferInsertColumns<TTable>,
+	InferInsertColumns<TTable, { override: true }>,
+	'all',
+	TTable['_']['name'],
+	'restricted'
+>[K];
 
 export type NoUnknownKeysInInsertSelection<
 	TTable extends MySqlTable,
 	TSelection extends MySqlInsertSelection<any>,
 	TColumnList extends string[] | 'all' = 'all',
-> = {
-	[K in keyof TSelection]: TColumnList extends string[]
-		? K extends TColumnList[number] ? ValidateInsertSelectionKey<TTable, TSelection, K>
-		: DrizzleTypeError<`Column "${K & string}" is not included in the insert column selection`>
-		: ValidateInsertSelectionKey<TTable, TSelection, K>;
-};
+> = ValidateNestedInsertSelection<
+	TSelection,
+	InferInsertColumns<TTable>,
+	InferInsertColumns<TTable, { override: true }>,
+	TColumnList,
+	TTable['_']['name'],
+	'restricted'
+>;
 
 export interface MySqlInsertBuilderConstructor {
 	new(
@@ -120,7 +133,9 @@ export class MySqlInsertBuilder<
 		private dialect: MySqlDialect,
 		private columnList?: string[],
 		private builder: MySqlInsertBuilderConstructor = MySqlInsertBase as unknown as MySqlInsertBuilderConstructor,
-	) {}
+	) {
+		if (columnList) this.columnList = expandInsertColumnList(table, columnList);
+	}
 
 	ignore(): this {
 		this.shouldIgnore = true;
@@ -136,6 +151,7 @@ export class MySqlInsertBuilder<
 		if (values.length === 0) {
 			throw new Error('values() must be called with at least one value');
 		}
+		values = values.map((value) => flattenEmbeddedValues(this.table, value)) as typeof values;
 		return new this.builder(
 			this.table,
 			values,
@@ -172,7 +188,7 @@ export class MySqlInsertBuilder<
 		const select = typeof selectQuery === 'function' ? selectQuery(new QueryBuilder()) : selectQuery;
 		if (!is(select, SQL)) {
 			const insertCols = Object.keys(this.table[Table.Symbol.Columns]);
-			const selected = Object.keys(select._.selectedFields);
+			const selected = Object.keys(flattenSelectedFields(select._.selectedFields));
 
 			for (const col of selected) {
 				if (!insertCols.includes(col)) {
@@ -233,7 +249,9 @@ export type MySqlInsertReturning<T extends AnyMySqlInsert> = T extends any ? MyS
 			T['_']['hkt'],
 			T['_']['table'],
 			T['_']['queryResult'],
-			InferModelFromColumns<GetPrimarySerialOrDefaultKeys<T['_']['table']['_']['columns']>>,
+			NestEmbedded<
+				InferModelFromColumns<GetPrimarySerialOrDefaultKeys<T['_']['table']['_']['columns']>>
+			>,
 			T['_']['dynamic'],
 			T['_']['excludedMethods']
 		>,

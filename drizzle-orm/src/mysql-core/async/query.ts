@@ -1,3 +1,4 @@
+import { nestEmbeddedRelationalRows } from '~/embed.ts';
 import { entityKind } from '~/entity.ts';
 import { QueryPromise } from '~/query-promise.ts';
 import { relationalQueryCacheConfig, relationalQueryCacheMetadata } from '~/relations.ts';
@@ -20,14 +21,17 @@ export class MySqlAsyncRelationalQuery<TResult> extends MySqlRelationalQuery<MyS
 
 	prepare() {
 		const { query, builtQuery, usedTables } = this._toSQL();
-		const mapper = this.mapper ??= this.dialect.mapperGenerators.relationalRows({
-			isFirst: this.mode === 'first',
-			parseJson: false,
-			parseJsonIfString: false,
-			rootJsonMappers: false,
-			arrayModeRoot: true,
-			selection: query.selection,
-		});
+		const mapper = this.mapper ??= nestEmbeddedRelationalRows(
+			this.dialect.mapperGenerators.relationalRows({
+				isFirst: this.mode === 'first',
+				parseJson: false,
+				parseJsonIfString: false,
+				rootJsonMappers: false,
+				arrayModeRoot: true,
+				selection: query.selection,
+			}),
+			query.selection,
+		);
 
 		return this.session.prepareQuery(
 			builtQuery,
