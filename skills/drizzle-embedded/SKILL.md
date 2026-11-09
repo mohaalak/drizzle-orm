@@ -92,7 +92,7 @@ Apps install the fork from npm under an alias, so imports stay `drizzle-orm`:
 
 ```jsonc
 // package.json
-"drizzle-orm": "npm:@pressnxpress/drizzle-orm@1.0.0-rc.5.pxp.4"
+"drizzle-orm": "npm:@pressnxpress/drizzle-orm@1.0.0-rc.5.pxp.5"
 ```
 
 The package is public on npmjs, so installs need no token or `.npmrc` entry. Releases are built and published by `.github/workflows/publish-npm.yaml` on `mohaalak/drizzle-orm`. It renames only the packed manifest; the source package stays `drizzle-orm`. Peer dependencies are kept and all optional, so install the driver (`mysql2`, `pg`…) and any validator library yourself.
@@ -109,6 +109,7 @@ To release after merging upstream into `feat/embedded-columns`:
    git tag pxp-v1.0.0-rc.6.pxp.1 && git push origin pxp-v1.0.0-rc.6.pxp.1
    ```
    You can also run the workflow manually (Actions → "Publish to npm") with a `version` input.
+   The workflow publishes through npm trusted publishing (no token) with provenance. npm takes up to ~15 minutes to process a release before `npm view` and installs see it.
 4. Bump the alias version in apps. A version can't be republished; to redo a release, bump `<n>`.
 
 ## Validators and seeding
