@@ -1,6 +1,9 @@
-# Publishes our fork's drizzle-orm (with embed() and taggedUnion()) to GitHub Packages as @mohaalak/drizzle-orm.
-# Release: push a tag `pxp-v<version>`, e.g. `pxp-v1.0.0-rc.5.pxp.1`. See skills/drizzle-embedded/SKILL.md, "Releasing the fork".
-name: Publish to GitHub Packages
+# Publishes our fork's drizzle-orm (with embed() and taggedUnion()) to npmjs as @pressnxpress/drizzle-orm.
+# Release: push a tag `pxp-v<version>`, e.g. `pxp-v1.0.0-rc.5.pxp.4`. See skills/drizzle-embedded/SKILL.md, "Installing and releasing the fork".
+#
+# Auth: npm trusted publishing (OIDC) once it is configured for the package on npmjs.com; until then the
+# `NPM_TOKEN` repository secret. npm >= 11.5.1 tries OIDC first and falls back to NODE_AUTH_TOKEN.
+name: Publish to npm
 
 on:
   push:
@@ -9,16 +12,16 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version to publish, e.g. 1.0.0-rc.5.pxp.2. Leave empty when running on a pxp-v* tag.'
+        description: 'Version to publish, e.g. 1.0.0-rc.5.pxp.4. Leave empty when running on a pxp-v* tag.'
         required: false
         type: string
 
 permissions:
   contents: read
-  packages: write
+  id-token: write # trusted publishing and provenance
 
 concurrency:
-  group: publish-github-packages
+  group: publish-npm
   cancel-in-progress: false
 
 jobs:
@@ -50,8 +53,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-          registry-url: 'https://npm.pkg.github.com'
-          scope: '@mohaalak'
+          registry-url: 'https://registry.npmjs.org'
+
+      # Node 22 ships npm 10; trusted publishing needs npm >= 11.5.1. Pinned to major 11 like upstream:
+      # the npm 12.0.0 tarball is missing `sigstore` and breaks `npm publish`.
+      - name: Update npm
+        run: npm install -g npm@11
 
       - uses: pnpm/action-setup@v4
         with:
@@ -71,29 +78,22 @@ jobs:
         run: pnpm test:types
 
       # Renames only the published manifest (dist/package.json); the source package stays `drizzle-orm`
-      # so workspace references keep working. `repository` links the package to this repo.
-      #
-      # Drops `peerDependencies` and `peerDependenciesMeta`. GitHub Packages leaves
-      # `peerDependenciesMeta` out of the packument it serves, though the tarball keeps it. pnpm
-      # resolves from the packument, so it saw all ~50 driver/validator peers as required and
-      # auto-installed every one (react-native, expo, mssql, effect...). Every peer is optional, and the
-      # app installs the driver it uses itself. Without the declarations, pnpm's isolated linker still
-      # finds the driver through its hidden hoist (`.pnpm/node_modules`), and `nodeLinker: hoisted`
-      # finds it in the root node_modules.
+      # so workspace references keep working. `repository` must match this repo for provenance and
+      # trusted publishing. Peer dependencies stay: npmjs serves `peerDependenciesMeta`, so pnpm treats
+      # the drivers and validators as optional.
       - name: Rewrite published manifest
         working-directory: drizzle-orm/dist
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           jq --arg v "$VERSION" '
-            .name = "@mohaalak/drizzle-orm"
+            .name = "@pressnxpress/drizzle-orm"
             | .version = $v
             | .repository = { type: "git", url: "git+https://github.com/mohaalak/drizzle-orm.git", directory: "drizzle-orm" }
-            | .publishConfig = { registry: "https://npm.pkg.github.com" }
-            | del(.peerDependencies, .peerDependenciesMeta)
+            | .publishConfig = { registry: "https://registry.npmjs.org", access: "public" }
           ' package.json > package.json.tmp
           mv package.json.tmp package.json
-          jq '{ name, version, repository, publishConfig, peerDependencies, peerDependenciesMeta, dependencies }' package.json
+          jq '{ name, version, repository, publishConfig, dependencies }' package.json
 
       - name: Pack
         working-directory: drizzle-orm
@@ -102,7 +102,7 @@ jobs:
       - name: Publish
         working-directory: drizzle-orm
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
-          npm publish package.tgz --registry https://npm.pkg.github.com --tag latest
-          echo "Published \`@mohaalak/drizzle-orm@${{ steps.version.outputs.version }}\`" >> "$GITHUB_STEP_SUMMARY"
+          npm publish package.tgz --access public --provenance --tag latest
+          echo "Published \`@pressnxpress/drizzle-orm@${{ steps.version.outputs.version }}\`" >> "$GITHUB_STEP_SUMMARY"

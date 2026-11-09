@@ -88,21 +88,18 @@ To adopt drizzle on a database whose schema already exists (for example one migr
 
 ## Installing and releasing the fork
 
-Apps install the fork from GitHub Packages under an alias, so imports stay `drizzle-orm`:
+Apps install the fork from npm under an alias, so imports stay `drizzle-orm`:
 
 ```jsonc
 // package.json
-"drizzle-orm": "npm:@mohaalak/drizzle-orm@1.0.0-rc.5.pxp.1"
-```
-```ini
-# .npmrc — the token needs read:packages
-@mohaalak:registry=https://npm.pkg.github.com
-//npm.pkg.github.com/:_authToken=${GITHUB_TOKEN}
+"drizzle-orm": "npm:@pressnxpress/drizzle-orm@1.0.0-rc.5.pxp.4"
 ```
 
-Releases are built and published by `.github/workflows/publish-github-packages.yaml` on `mohaalak/drizzle-orm`. It renames only the packed manifest; the source package stays `drizzle-orm`.
+The package is public on npmjs, so installs need no token or `.npmrc` entry. Releases are built and published by `.github/workflows/publish-npm.yaml` on `mohaalak/drizzle-orm`. It renames only the packed manifest; the source package stays `drizzle-orm`. Peer dependencies are kept and all optional, so install the driver (`mysql2`, `pg`…) and any validator library yourself.
 
-The published package declares no peer dependencies; install the driver (`mysql2`, `pg`…) and any validator library yourself. GitHub Packages drops `peerDependenciesMeta` from the metadata it serves, so pnpm would treat all ~50 optional peers as required and install every one of them. The workflow deletes the peers from the published manifest to prevent that. To release after merging upstream into `feat/embedded-columns`:
+Versions up to `1.0.0-rc.5.pxp.3` went to GitHub Packages as `@mohaalak/drizzle-orm` without peer dependencies; that registry is no longer published to.
+
+To release after merging upstream into `feat/embedded-columns`:
 
 1. Run `pnpm build:orm` and the fork's tests (`drizzle-orm/tests/*embed*`, `*tagged-union*`, `mysql-migrate-init`).
 2. Pick the version `<upstream version>.pxp.<n>`. Examples: `1.0.0-rc.5.pxp.2` for a second fork release on rc.5, and `1.0.0-rc.6.pxp.1` after merging rc.6. Separate `pxp` with a dot, not a hyphen: `rc.5-pxp.1` sorts above every later upstream rc, and `rc.10-pxp.1` sorts below `rc.9-pxp.1`. Upstream's stable `1.0.0` needs `1.0.1-pxp.1`, because `1.0.0-pxp.1` sorts below `1.0.0` and fails drizzle-kit's `>=1.0.0` peer range.
@@ -111,7 +108,7 @@ The published package declares no peer dependencies; install the driver (`mysql2
    git push origin feat/embedded-columns
    git tag pxp-v1.0.0-rc.6.pxp.1 && git push origin pxp-v1.0.0-rc.6.pxp.1
    ```
-   You can also run the workflow manually (Actions → "Publish to GitHub Packages") with a `version` input.
+   You can also run the workflow manually (Actions → "Publish to npm") with a `version` input.
 4. Bump the alias version in apps. A version can't be republished; to redo a release, bump `<n>`.
 
 ## Validators and seeding
