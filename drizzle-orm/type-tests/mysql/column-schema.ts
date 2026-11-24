@@ -275,35 +275,18 @@ Expect<
 		geo: new GeoLocation(1, 2),
 		uploader: { kind: 'system' },
 	});
-	db.insert(accounts).values({
-		// @ts-expect-error - a plain string is not an Email
-		email: 'a@x.io',
-		address: { city },
-		geo: new GeoLocation(1, 2),
-		uploader: { kind: 'system' },
-	});
+	// dprint-ignore
+	// @ts-expect-error - a plain string is not an Email
+	db.insert(accounts).values({ email: 'a@x.io', address: { city }, geo: new GeoLocation(1, 2), uploader: { kind: 'system' } });
+	// dprint-ignore
 	// @ts-expect-error - a nullable column with a Column Schema takes an Option, not null
-	db.insert(accounts).values({
-		email,
-		balance: null,
-		address: { city },
-		geo: new GeoLocation(1, 2),
-		uploader: { kind: 'system' },
-	});
+	db.insert(accounts).values({ email, balance: null, address: { city }, geo: new GeoLocation(1, 2), uploader: { kind: 'system' } });
+	// dprint-ignore
 	// @ts-expect-error - a group with a Column Schema takes its domain value, not its columns
-	db.insert(accounts).values({
-		email,
-		address: { city },
-		geo: { lat: 1, lng: 2 },
-		uploader: { kind: 'system' },
-	});
+	db.insert(accounts).values({ email, address: { city }, geo: { lat: 1, lng: 2 }, uploader: { kind: 'system' } });
+	// dprint-ignore
 	// @ts-expect-error - a variant column with a Column Schema takes its domain value
-	db.insert(accounts).values({
-		email,
-		address: { city },
-		geo: new GeoLocation(1, 2),
-		uploader: { kind: 'staff', staffId: 1 },
-	});
+	db.insert(accounts).values({ email, address: { city }, geo: new GeoLocation(1, 2), uploader: { kind: 'staff', staffId: 1 } });
 
 	db.update(accounts).set({
 		balance: Option.none(),

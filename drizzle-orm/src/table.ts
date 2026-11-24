@@ -6,7 +6,6 @@ import type { OptionalKeyOnly, RequiredKeyOnly } from './operations.ts';
 import type { SQLChunk } from './sql/sql.ts';
 import {
 	BaseName,
-	CacheKey,
 	ExtraConfigBuilder,
 	ExtraConfigColumns,
 	IsAlias,
@@ -21,7 +20,6 @@ import {
 /** @internal */
 export {
 	BaseName,
-	CacheKey,
 	ExtraConfigBuilder,
 	ExtraConfigColumns,
 	IsAlias,
@@ -75,7 +73,6 @@ export class Table<out T extends TableConfig = TableConfig> {
 		BaseName: BaseName as typeof BaseName,
 		IsAlias: IsAlias as typeof IsAlias,
 		ExtraConfigBuilder: ExtraConfigBuilder as typeof ExtraConfigBuilder,
-		CacheKey: CacheKey as typeof CacheKey,
 	};
 
 	/**
@@ -112,13 +109,6 @@ export class Table<out T extends TableConfig = TableConfig> {
 	 */
 	[BaseName]: string;
 
-	/**
-	 * @internal
-	 * Table's identity in the query cache's invalidation index - its actual name (`schema.name`, or `name`
-	 * when unscoped), matching {@link getTableUniqueName} of non-aliased tables
-	 */
-	[CacheKey]: string;
-
 	/** @internal */
 	declare readonly [Qualifier]: SQLChunk;
 
@@ -135,7 +125,6 @@ export class Table<out T extends TableConfig = TableConfig> {
 		this[TableName] = this[OriginalName] = name;
 		this[TableSchema] = schema;
 		this[BaseName] = baseName;
-		this[CacheKey] = schema ? `${schema}.${name}` : name;
 	}
 }
 
@@ -185,10 +174,6 @@ export function getTableUniqueName<
 	return (table[IsAlias] || table[TableSchema] === undefined
 		? table[TableName]
 		: `${table[TableSchema]}.${table[TableName]}`) as TResult;
-}
-
-export function getCacheKey(table: Table): string {
-	return table[CacheKey];
 }
 
 /**

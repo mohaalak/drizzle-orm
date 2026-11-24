@@ -78,10 +78,9 @@ Expect<
 	db.insert(users).values({ name: 'Ada', address: { city: 'Berlin' } }).onDuplicateKeyUpdate({
 		set: { address: { geo: { lat: 1 } }, note: null },
 	});
-	db.insert(users).values({ name: 'Ada', address: { city: 'Berlin' } }).onDuplicateKeyUpdate({
-		// @ts-expect-error - not a column of the group
-		set: { address: { country: 'DE' } },
-	});
+	// dprint-ignore
+	// @ts-expect-error - not a column of the group
+	db.insert(users).values({ name: 'Ada', address: { city: 'Berlin' } }).onDuplicateKeyUpdate({ set: { address: { country: 'DE' } } });
 }
 
 {
@@ -171,9 +170,7 @@ Expect<
 	db.insert(users, 'name', 'address').values({ name: 'Ada', address: { street: 'Main' } });
 	// @ts-expect-error - `note` is not included in the column selection
 	db.insert(users, 'name', 'address').values({ name: 'Ada', address: { city: 'Berlin' }, note: { body: 'x' } });
+	// dprint-ignore
 	// @ts-expect-error - `street` is not included in the column selection
-	db.insert(users, 'name', 'address.city', 'address.geo').values({
-		name: 'Ada',
-		address: { city: 'Berlin', street: 'Main', geo: { lat: 1 } },
-	});
+	db.insert(users, 'name', 'address.city', 'address.geo').values({ name: 'Ada', address: { city: 'Berlin', street: 'Main', geo: { lat: 1 } } });
 }

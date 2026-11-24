@@ -17,7 +17,6 @@ import type { SingleStoreTable } from '~/singlestore-core/table.ts';
 import type { Placeholder, Query, SQL, SQLWrapper } from '~/sql/sql.ts';
 import type { Subquery } from '~/subquery.ts';
 import type { InferInsertColumns } from '~/table.ts';
-import { usedTablesOf } from '~/used-tables.ts';
 import { mapUpdateSet, type UpdateSet, type ValueOrArray } from '~/utils.ts';
 import type { SingleStoreColumn } from '../columns/common.ts';
 import type { SelectedFieldsOrdered } from './select.types.ts';
@@ -30,7 +29,6 @@ export interface SingleStoreUpdateConfig {
 	table: SingleStoreTable;
 	returning?: SelectedFieldsOrdered;
 	withList?: Subquery[];
-	useSelectionCastCodecs?: boolean;
 }
 
 export type SingleStoreUpdateSetSource<
@@ -232,27 +230,21 @@ export class SingleStoreUpdateBase<
 		return this as any;
 	}
 
-	getSQL(withCastCodecs = false): SQL {
-		return this.dialect.buildUpdateQuery(
-			withCastCodecs ? { ...this.config, useSelectionCastCodecs: true } : this.config,
-		);
+	getSQL(): SQL {
+		return this.dialect.buildUpdateQuery(this.config);
 	}
 
-	toSQL(withCastCodecs = true): Query {
-		return this.dialect.sqlToQuery(this.getSQL(withCastCodecs));
+	toSQL(): Query {
+		return this.dialect.sqlToQuery(this.getSQL());
 	}
 
 	prepare(): SingleStoreUpdatePrepare<this> {
 		const { returning: fields } = this.config;
 
 		return this.session.prepareQuery(
-			this.dialect.sqlToQuery(this.getSQL(true)),
+			this.dialect.sqlToQuery(this.getSQL()),
 			fields ? 'arrays' : 'raw',
 			fields ? this.dialect.mapperGenerators.rows(fields, undefined) : undefined,
-			{
-				type: 'update',
-				tables: () => usedTablesOf(this.config.table),
-			},
 		) as SingleStoreUpdatePrepare<this>;
 	}
 

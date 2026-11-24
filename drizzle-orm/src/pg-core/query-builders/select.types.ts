@@ -9,6 +9,7 @@ import type { PgTable, PgTableWithColumns } from '~/pg-core/table.ts';
 import type { PgViewBase } from '~/pg-core/view-base.ts';
 import type { PgMaterializedView, PgMaterializedViewWithSelection, PgViewWithSelection } from '~/pg-core/view.ts';
 import type { TypedQueryBuilder } from '~/query-builders/query-builder.ts';
+import type { QueryRuntimeHKT } from '~/query-builders/runtime.ts';
 import type {
 	AppendToNullabilityMap,
 	AppendToResult,
@@ -92,7 +93,6 @@ export interface PgSelectConfig {
 	shape?: any;
 	mapper?: (raw: any) => any;
 	comment?: SQL;
-	useSelectionCastCodecs?: boolean;
 	tagged?: boolean;
 }
 
@@ -125,7 +125,7 @@ export type PgSelectJoin<
 				T['_']['selection'],
 				TJoinedName,
 				TJoinedTable extends Table ? NestEmbedded<TJoinedTable['_']['columns']>
-					: TJoinedTable extends Subquery | View ? Assume<TJoinedTable['_']['selectedFields'], SelectedFields>
+					: TJoinedTable extends Subquery | View ? TJoinedTable['_']['selectedFields']
 					: never,
 				T['_']['selectMode']
 			>,
@@ -187,6 +187,8 @@ export type LockConfig =
 	});
 
 export interface PgSelectHKTBase {
+	/** How the builder's runtime wraps it's results */
+	runtime: QueryRuntimeHKT;
 	tableName: string | undefined;
 	selection: unknown;
 	selectMode: SelectMode;
@@ -220,6 +222,8 @@ export type PgSelectKind<
 })['_type'];
 
 export interface PgSelectQueryBuilderHKT extends PgSelectHKTBase {
+	/** Any runtime: `QueryBuilder` selects aren't run, and the generic select types (`PgSelect`) take both runtimes' */
+	runtime: QueryRuntimeHKT;
 	_type: PgSelectBase<
 		PgSelectQueryBuilderHKT,
 		this['tableName'],

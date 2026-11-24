@@ -208,11 +208,9 @@ Expect<
 	db.insert(users, 'name', 'address').values({ name: 'Ada', address: { street: 'Main' } });
 	// @ts-expect-error - `note` is not included in the column selection
 	db.insert(users, 'name', 'address').values({ name: 'Ada', address: { city: 'Berlin' }, note: { body: 'x' } });
+	// dprint-ignore
 	// @ts-expect-error - `street` is not included in the column selection
-	db.insert(users, 'name', 'address.city', 'address.geo').values({
-		name: 'Ada',
-		address: { city: 'Berlin', street: 'Main', geo: { lat: 1 } },
-	});
+	db.insert(users, 'name', 'address.city', 'address.geo').values({ name: 'Ada', address: { city: 'Berlin', street: 'Main', geo: { lat: 1 } } });
 
 	db.insert(users, 'name', 'address').select(
 		qb.select({ name: users.name, address: { city: users.address.city, geo: { lat: users.address.geo.lat } } })

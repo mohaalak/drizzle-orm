@@ -569,6 +569,7 @@ test('all data types', (t) => {
 	Expect<Equal<typeof result, typeof expected>>();
 });
 
+// https://github.com/drizzle-team/drizzle-orm/issues/5659
 test('type coercion - all', (t) => {
 	const table = singlestoreTable('test', ({
 		bigint,
@@ -599,6 +600,7 @@ test('type coercion - all', (t) => {
 	Expect<Equal<typeof result, typeof expected>>();
 });
 
+// https://github.com/drizzle-team/drizzle-orm/issues/5659
 test('type coercion - mixed', (t) => {
 	const table = singlestoreTable('test', ({
 		timestamp,

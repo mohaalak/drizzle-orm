@@ -8,7 +8,6 @@ import type {
 	UnionSharedColumnData,
 	WithoutColumnSchema,
 } from '~/embed.ts';
-import type { SelectedFields } from '~/operations.ts';
 import type { ColumnsSelection, SQL } from '~/sql/sql.ts';
 import type { Subquery } from '~/subquery.ts';
 import type { Table } from '~/table.ts';
@@ -68,7 +67,7 @@ type SelectPartialResult<TFields, TNullability extends Record<string, JoinNullab
 			: TField extends SQL | SQL.Aliased ? SelectResultField<TField>
 			: TField extends Subquery ? FromSingleKeyObject<
 					TField['_']['selectedFields'],
-					TField['_']['selectedFields'] extends { [key: string]: infer TValue } ? SelectResultField<TValue> : never,
+					SubqueryResultField<TField>,
 					'You can only select one column in the subquery'
 				>
 			: TField extends Record<string, any>
@@ -125,9 +124,7 @@ export type AddAliasToSelection<
 				: TSelection[Key] extends SQL | SQL.Aliased ? TSelection[Key]
 				: TSelection[Key] extends Subquery ? FromSingleKeyObject<
 						TSelection[Key]['_']['selectedFields'],
-						TSelection[Key]['_']['selectedFields'] extends { [key: string]: infer TValue }
-							? SQL.Aliased<SelectResultField<TValue>>
-							: never,
+						SQL.Aliased<SubqueryResultField<TSelection[Key]>>,
 						'You can only select one column in the subquery'
 					>
 				// a nested object, such as an `embed()` group, which may hold further groups
@@ -140,7 +137,7 @@ export type AppendToResult<
 	TTableName extends string | undefined,
 	TResult,
 	TJoinedName extends string | undefined,
-	TSelectedFields extends SelectedFields<Column, Table>,
+	TSelectedFields extends ColumnsSelection,
 	TOldSelectMode extends SelectMode,
 > = TOldSelectMode extends 'partial' ? TResult
 	: TOldSelectMode extends 'single' ?
@@ -163,9 +160,7 @@ export type BuildSubquerySelection<
 					? ApplyNullabilityToColumn<TSelection[Key], TNullability[TSelection[Key]['_']['tableName']]>
 				: TSelection[Key] extends Subquery ? FromSingleKeyObject<
 						TSelection[Key]['_']['selectedFields'],
-						TSelection[Key]['_']['selectedFields'] extends { [key: string]: infer TValue }
-							? SQL.Aliased<SelectResultField<TValue>>
-							: never,
+						SQL.Aliased<SubqueryResultField<TSelection[Key]>>,
 						'You can only select one column in the subquery'
 					>
 				: TSelection[Key] extends ColumnsSelection ? BuildSubquerySelection<TSelection[Key], TNullability>
@@ -199,9 +194,13 @@ export type GetSelectTableName<TTable extends TableLike> = TTable extends Table 
 
 export type GetSelectTableSelection<TTable extends TableLike> = TTable extends Table
 	? NestEmbedded<TTable['_']['columns']>
-	: TTable extends Subquery | View ? Assume<TTable['_']['selectedFields'], ColumnsSelection>
+	: TTable extends Subquery | View ? TTable['_']['selectedFields']
 	: TTable extends SQL ? {}
 	: never;
+
+export type SubqueryResultField<TSubquery extends Subquery> =
+	| (TSubquery['_']['selectedFields'] extends { [key: string]: infer TValue } ? SelectResultField<TValue> : never)
+	| null;
 
 export type SelectResultField<T, TDeep extends boolean = true> = T extends DrizzleTypeError<any> ? T
 	: T extends Table

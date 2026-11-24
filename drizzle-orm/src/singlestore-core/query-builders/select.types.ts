@@ -57,7 +57,6 @@ export interface SingleStoreSelectConfig {
 	fields: Record<string, unknown>;
 	fieldsFlat?: SelectedFieldsOrdered;
 	mapper?: (raw: any) => any;
-	useSelectionCastCodecs?: boolean;
 	where?: SQL;
 	having?: SQL;
 	table: SingleStoreTable | Subquery | SQL; // | SingleStoreViewBase
@@ -96,7 +95,7 @@ export type SingleStoreJoin<
 				T['_']['selection'],
 				TJoinedName,
 				TJoinedTable extends SingleStoreTable ? NestEmbedded<TJoinedTable['_']['columns']>
-					: TJoinedTable extends Subquery ? Assume<TJoinedTable['_']['selectedFields'], SelectedFields>
+					: TJoinedTable extends Subquery ? TJoinedTable['_']['selectedFields']
 					: never,
 				T['_']['selectMode']
 			>,

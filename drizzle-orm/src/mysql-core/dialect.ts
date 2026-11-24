@@ -16,7 +16,7 @@ import type {
 import {
 	buildRqbColumns,
 	// AggregatedField,
-	collectSubqueryAndUsedTables,
+	collectSubquery,
 	getTableAsAliasSQL,
 	makeDefaultRqbMapper,
 	makeJitRqbMapper,
@@ -235,9 +235,8 @@ export class MySqlDialect {
 	 */
 	private buildSelection(
 		fields: SelectedFieldsOrdered,
-		{ isSingleTable = false, ignoreCastCodecs = false, table }: {
+		{ isSingleTable = false, table }: {
 			isSingleTable?: boolean;
-			ignoreCastCodecs?: boolean;
 			table?: MySqlTable | MySqlViewBase | SQL | Subquery;
 		} = {},
 	): SQL {
@@ -253,8 +252,7 @@ export class MySqlDialect {
 			: undefined;
 
 		for (let i = 0; i < columnsLen; ++i) {
-			const { field, codecOverride, column, fieldType } = fields[i]!;
-			const override = codecOverride as MySqlType | undefined;
+			const { field, fieldType } = fields[i]!;
 
 			switch (fieldType) {
 				case 'Column': {
@@ -267,8 +265,7 @@ export class MySqlDialect {
 						name = field.isAlias ? getOriginalColumnFromAlias(field) : field;
 					}
 
-					const casted = ignoreCastCodecs ? name : this.codecs.apply(field, 'cast', name, override);
-					chunks.push(field.isAlias ? sql`${casted} as ${field}` : casted);
+					chunks.push(field.isAlias ? sql`${name} as ${field}` : name);
 
 					break;
 				}
@@ -277,8 +274,7 @@ export class MySqlDialect {
 						const query = !isSingleTable && field.origin !== undefined
 							? sql`${sql.identifier(field.origin)}.${sql.identifier(field.fieldAlias)}`
 							: sql.identifier(field.fieldAlias);
-						if (column && !ignoreCastCodecs) chunks.push(this.codecs.apply(column, 'cast', query, override));
-						else chunks.push(query);
+						chunks.push(query);
 					} else {
 						if (isSingleTable && tableName !== undefined) {
 							const { queryChunks } = field.sql;
@@ -305,19 +301,19 @@ export class MySqlDialect {
 
 							if (abort) {
 								chunks.push(
-									column && !ignoreCastCodecs ? this.codecs.apply(column, 'cast', field.sql, override) : field.sql,
+									field.sql,
 								);
 							} else {
 								const newSql = new SQL(newChunks);
 
 								if (field.sql.shouldInlineParams) newSql.inlineParams();
 								chunks.push(
-									column && !ignoreCastCodecs ? this.codecs.apply(column, 'cast', newSql, override) : newSql,
+									newSql,
 								);
 							}
 						} else {
 							chunks.push(
-								column && !ignoreCastCodecs ? this.codecs.apply(column, 'cast', field.sql, override) : field.sql,
+								field.sql,
 							);
 						}
 
@@ -351,13 +347,13 @@ export class MySqlDialect {
 						}
 
 						if (abort) {
-							chunks.push(column && !ignoreCastCodecs ? this.codecs.apply(column, 'cast', field, override) : field);
+							chunks.push(field);
 						} else {
 							const newSql = new SQL(newChunks);
 							if (field.shouldInlineParams) newSql.inlineParams();
-							chunks.push(column && !ignoreCastCodecs ? this.codecs.apply(column, 'cast', newSql, override) : newSql);
+							chunks.push(newSql);
 						}
-					} else chunks.push(column && !ignoreCastCodecs ? this.codecs.apply(column, 'cast', field, override) : field);
+					} else chunks.push(field);
 
 					break;
 				}
@@ -365,12 +361,10 @@ export class MySqlDialect {
 					if (!field._.isWith) {
 						const inner = sql`(${field._.sql})`;
 						chunks.push(
-							sql`${column && !ignoreCastCodecs ? this.codecs.apply(column, 'cast', inner, override) : inner} ${
-								sql.identifier(field._.alias)
-							}`,
+							sql`${inner} ${sql.identifier(field._.alias)}`,
 						);
 					} else {
-						chunks.push(column && !ignoreCastCodecs ? this.codecs.apply(column, 'cast', field, override) : field);
+						chunks.push(field);
 					}
 
 					break;
@@ -386,11 +380,10 @@ export class MySqlDialect {
 	}
 
 	private buildLimit(limit: number | Placeholder | undefined): SQL | undefined {
-		return typeof limit === 'object'
-				|| (typeof limit === 'number' && limit >= 0)
-			// Binary protocol bug bypass
-			? sql` limit ${sql.param(limit, this.paginationEncoder)}`
-			: undefined;
+		// Binary protocol bug bypass
+		return limit === undefined
+			? undefined
+			: sql` limit ${sql.param(limit, this.paginationEncoder)}`;
 	}
 
 	private buildOrderBy(
@@ -431,7 +424,6 @@ export class MySqlDialect {
 		forceIndex,
 		ignoreIndex,
 		comment,
-		useSelectionCastCodecs,
 	}: MySqlSelectConfig): SQL {
 		if (!fieldsFlat) {
 			throw new Error('Select query builder must be provided with `fieldsFlat` on `buildSelectQuery` invocation');
@@ -478,7 +470,6 @@ export class MySqlDialect {
 
 		const selection = this.buildSelection(fieldsList, {
 			isSingleTable,
-			ignoreCastCodecs: !useSelectionCastCodecs || setOperators.length > 0,
 			table,
 		});
 
@@ -566,9 +557,9 @@ export class MySqlDialect {
 		const limitSql = this.buildLimit(limit);
 
 		// Binary protocol bug bypass
-		const offsetSql = offset
-			? sql` offset ${sql.param(offset, this.paginationEncoder)}`
-			: undefined;
+		const offsetSql = offset === undefined
+			? undefined
+			: sql` offset ${sql.param(offset, this.paginationEncoder)}`;
 
 		const useIndexSql = this.buildIndex({ indexes: useIndex, indexFor: 'USE' });
 
@@ -599,7 +590,7 @@ export class MySqlDialect {
 			}`;
 
 		if (setOperators.length > 0) {
-			return this.buildSetOperations(finalQuery, fieldsList, useSelectionCastCodecs, setOperators);
+			return this.buildSetOperations(finalQuery, fieldsList, setOperators);
 		}
 
 		return finalQuery;
@@ -608,7 +599,6 @@ export class MySqlDialect {
 	buildSetOperations(
 		leftSelect: SQL,
 		leftSelection: SelectedFieldsOrdered,
-		useSelectionCastCodecs: boolean | undefined,
 		setOperators: MySqlSelectConfig['setOperators'],
 	): SQL {
 		const outputSelection = leftSelection;
@@ -641,32 +631,7 @@ export class MySqlDialect {
 				: out.codec;
 		}
 
-		return !useSelectionCastCodecs ? leftSelect : sql`select ${
-			this.buildSelection(
-				outputSelection.map((field) => {
-					if (field.fieldType === 'SQL.Aliased') {
-						const ref = field.field.clone();
-						ref.isSelectionField = true;
-						return { ...field, field: ref, fieldType: 'SQL.Aliased' };
-					}
-					if (field.fieldType === 'Column' && field.field.isAlias) {
-						const ref = new SQL.Aliased(sql`${sql.identifier(field.field.name)}`, field.field.name);
-						ref.isSelectionField = true;
-						return { ...field, field: ref, fieldType: 'SQL.Aliased' };
-					}
-					if (field.fieldType === 'Subquery') {
-						const ref = new SQL.Aliased(sql`${field.field.getSQL()}`, field.field._.alias);
-						ref.isSelectionField = true;
-						return { ...field, field: ref, fieldType: 'SQL.Aliased' };
-					}
-					return field;
-				}),
-				{
-					isSingleTable: true,
-					ignoreCastCodecs: !useSelectionCastCodecs,
-				},
-			)
-		} from (${leftSelect}) ${sql.identifier('drizzle_union')}`;
+		return leftSelect;
 	}
 
 	buildSetOperationQuery({
@@ -698,16 +663,16 @@ export class MySqlDialect {
 			orderBySql = sql` order by ${sql.join(orderByValues, commonStringChunks[', '])}`;
 		}
 
-		const limitSql = typeof limit === 'object' || (typeof limit === 'number' && limit >= 0)
-			? sql` limit ${limit}`
-			: undefined;
+		const limitSql = limit === undefined
+			? undefined
+			: sql` limit ${sql.param(limit, this.paginationEncoder)}`;
 
 		const operatorChunk = new StringChunk(`${type} ${isAll ? 'all ' : ''}`);
 
 		// Binary protocol bug bypass
-		const offsetSql = offset
-			? sql` offset ${sql.param(offset, this.paginationEncoder)}`
-			: undefined;
+		const offsetSql = offset === undefined
+			? undefined
+			: sql` offset ${sql.param(offset, this.paginationEncoder)}`;
 
 		return sql`${leftChunk}${operatorChunk}${rightChunk}${orderBySql}${limitSql}${offsetSql}`;
 	}
@@ -842,7 +807,6 @@ export class MySqlDialect {
 		through,
 		nested,
 		withSubqueries,
-		usedTables,
 		strategy,
 	}: MySqlBuildRelationalQueryConfig, collectTo: SQLChunk[]): BuildRelationalQueryResult['selection'] {
 		const selection: BuildRelationalQueryResult['selection'] = [];
@@ -851,9 +815,9 @@ export class MySqlDialect {
 		const currentPath = errorPath ?? '';
 		const currentDepth = depth ?? 0;
 		const isOptimized = (currentDepth ? strategy : params?.strategy) !== 'basic';
-		const collector: RelationalWithSubqueries = withSubqueries ?? { subqueries: new Map(), usedTables };
+		const collector: RelationalWithSubqueries = withSubqueries ?? { subqueries: new Map() };
 		if (!currentDepth) {
-			collectSubqueryAndUsedTables(collector, table);
+			collectSubquery(collector, table);
 			table = aliasedTable(table, `d${currentDepth}`);
 		}
 		const tableRef = table[Qualifier];
@@ -950,8 +914,8 @@ export class MySqlDialect {
 			const relation = tableConfig.relations[k];
 			if (!relation) throw new DrizzleError({ message: `Unknown relation "${tableConfig.name}" -> "${k}"` });
 			const isSingle = relation.relationType === 'one';
-			collectSubqueryAndUsedTables(collector, relation.targetTable);
-			collectSubqueryAndUsedTables(collector, relation.throughTable);
+			collectSubquery(collector, relation.targetTable);
+			collectSubquery(collector, relation.throughTable);
 
 			const targetTable = aliasedTable(
 				relation.targetTable,

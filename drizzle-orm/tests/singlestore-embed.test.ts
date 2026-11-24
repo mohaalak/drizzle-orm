@@ -95,7 +95,7 @@ describe('embed (no database)', () => {
 		expect(users.address.geo.lat.name).toBe('address_geo_lat');
 		expect(users.billing.zip.name).toBe('billing_zip_code');
 		expect(db.select().from(users).where(eq(users.address.city, 'Berlin')).toSQL().sql).toBe(
-			'select cast(`id` as char), `name`, `address_street`, `address_city`, `address_geo_lat`, `address_geo_lng`, `billing_zip_code` from `embed_users` where `embed_users`.`address_city` = ?',
+			'select `id`, `name`, `address_street`, `address_city`, `address_geo_lat`, `address_geo_lng`, `billing_zip_code` from `embed_users` where `embed_users`.`address_city` = ?',
 		);
 	});
 

@@ -72,7 +72,6 @@ export interface CockroachSelectConfig {
 	fieldsFlat?: SelectedFieldsOrdered;
 	setFieldsFlat?: SelectedFieldsOrdered;
 	mapper?: (raw: any) => any;
-	useSelectionCastCodecs?: boolean;
 	where?: SQL;
 	having?: SQL;
 	table: CockroachTable | Subquery | CockroachViewBase | SQL;
@@ -127,7 +126,7 @@ export type CockroachSelectJoin<
 				T['_']['selection'],
 				TJoinedName,
 				TJoinedTable extends Table ? NestEmbedded<TJoinedTable['_']['columns']>
-					: TJoinedTable extends Subquery | View ? Assume<TJoinedTable['_']['selectedFields'], SelectedFields>
+					: TJoinedTable extends Subquery | View ? TJoinedTable['_']['selectedFields']
 					: never,
 				T['_']['selectMode']
 			>,
