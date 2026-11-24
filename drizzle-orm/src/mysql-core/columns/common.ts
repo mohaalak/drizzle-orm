@@ -1,5 +1,7 @@
 import { ColumnBuilder } from '~/column-builder.ts';
 import type {
+	BuildColumns,
+	ColumnBuilderBase,
 	ColumnBuilderBaseConfig,
 	ColumnBuilderExtraConfig,
 	ColumnBuilderRuntimeConfig,
@@ -10,12 +12,13 @@ import type {
 } from '~/column-builder.ts';
 import type { ColumnBaseConfig } from '~/column.ts';
 import { Column } from '~/column.ts';
+import type { EmbedBuilder, FlattenEmbedBuilders } from '~/embed.ts';
 import { entityKind } from '~/entity.ts';
 import type { ForeignKey, UpdateDeleteAction } from '~/mysql-core/foreign-keys.ts';
 import { ForeignKeyBuilder } from '~/mysql-core/foreign-keys.ts';
 import type { MySqlTable } from '~/mysql-core/table.ts';
 import type { SQL } from '~/sql/sql.ts';
-import type { Update } from '~/utils.ts';
+import type { Assume, Update } from '~/utils.ts';
 import type { MySqlType } from '../codecs.ts';
 
 export type MySqlColumns = Record<string, MySqlColumn<any>>;
@@ -113,6 +116,18 @@ export abstract class MySqlColumn<
 export type AnyMySqlColumn<TPartial extends Partial<ColumnBaseConfig<ColumnType>> = {}> = MySqlColumn<
 	Required<Update<ColumnBaseConfig<ColumnType>, TPartial>>
 >;
+
+/** A table definition: column builders, optionally grouped with `embed()`. */
+export type MySqlTableColumnsMap = Record<string, ColumnBuilderBase | EmbedBuilder>;
+
+type HasEmbeds<TConfigMap> = [Extract<TConfigMap[keyof TConfigMap], EmbedBuilder>] extends [never] ? false : true;
+
+export type MySqlBuildColumns<
+	TTableName extends string,
+	TConfigMap extends MySqlTableColumnsMap,
+> = HasEmbeds<TConfigMap> extends true
+	? BuildColumns<TTableName, Assume<FlattenEmbedBuilders<TConfigMap>, Record<string, ColumnBuilderBase>>, 'mysql'>
+	: BuildColumns<TTableName, Assume<TConfigMap, Record<string, ColumnBuilderBase>>, 'mysql'>;
 
 export interface MySqlColumnWithAutoIncrementConfig {
 	autoIncrement: boolean;

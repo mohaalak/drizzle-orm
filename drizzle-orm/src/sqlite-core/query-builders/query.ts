@@ -1,3 +1,4 @@
+import { nestEmbeddedRelationalRows } from '~/embed.ts';
 import { entityKind, is } from '~/entity.ts';
 import type {
 	BuildQueryResult,
@@ -187,14 +188,17 @@ export class SQLiteRelationalQuery<THKT extends SQLiteRelationalQueryHKTBase, TR
 	_prepare(prepare = false): SQLitePreparedQuery {
 		const { query, builtQuery } = this._toSQL();
 
-		const mapper = this.mapper ??= this.dialect.mapperGenerators.relationalRows({
-			isFirst: this.mode === 'first',
-			parseJson: true,
-			parseJsonIfString: false,
-			rootJsonMappers: false,
-			selection: query.selection,
-			arrayModeRoot: true,
-		});
+		const mapper = this.mapper ??= nestEmbeddedRelationalRows(
+			this.dialect.mapperGenerators.relationalRows({
+				isFirst: this.mode === 'first',
+				parseJson: true,
+				parseJsonIfString: false,
+				rootJsonMappers: false,
+				selection: query.selection,
+				arrayModeRoot: true,
+			}),
+			query.selection,
+		);
 
 		return this.session.prepareQuery(
 			builtQuery,

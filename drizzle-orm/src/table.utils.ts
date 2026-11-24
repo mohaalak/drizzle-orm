@@ -10,6 +10,9 @@ export const TableSchema = Symbol.for('drizzle:Schema');
 export const TableColumns = Symbol.for('drizzle:Columns');
 
 /** @internal */
+export const TableShape = Symbol.for('drizzle:Shape');
+
+/** @internal */
 export const ExtraConfigColumns = Symbol.for('drizzle:ExtraConfigColumns');
 
 /** @internal */

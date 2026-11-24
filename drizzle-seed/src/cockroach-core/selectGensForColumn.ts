@@ -1,6 +1,7 @@
 import { generatorsMap } from '../generators/GeneratorFuncs.ts';
 import type { AbstractGenerator, GenerateInterval } from '../generators/Generators.ts';
 import type { Column, Table } from '../types/tables.ts';
+import { ownColumnName } from '../utils.ts';
 
 // TODO: revise serial part generators
 export const selectGeneratorForCockroachColumn = (
@@ -99,7 +100,7 @@ export const selectGeneratorForCockroachColumn = (
 			(col.columnType === 'string'
 				|| col.columnType.startsWith('varchar')
 				|| col.columnType.startsWith('char'))
-			&& col.name.toLowerCase().includes('name')
+			&& ownColumnName(col).includes('name')
 		) {
 			const generator = new generatorsMap.GenerateFirstName[0]();
 
@@ -110,7 +111,7 @@ export const selectGeneratorForCockroachColumn = (
 			(col.columnType === 'string'
 				|| col.columnType.startsWith('varchar')
 				|| col.columnType.startsWith('char'))
-			&& col.name.toLowerCase().includes('email')
+			&& ownColumnName(col).includes('email')
 		) {
 			const generator = new generatorsMap.GenerateEmail[0]();
 

@@ -1,5 +1,5 @@
 import { type Casing, getCasingFn } from '~/casing.ts';
-import type { BuildColumns, BuildExtraConfigColumns, ColumnBuilderBase } from '~/column-builder.ts';
+import { flattenEmbedBuilders, type NestEmbedded, nestEmbeddedColumns } from '~/embed.ts';
 import { entityKind } from '~/entity.ts';
 import {
 	type InferTableColumnsModels,
@@ -9,7 +9,13 @@ import {
 } from '~/table.ts';
 import type { CheckBuilder } from './checks.ts';
 import { getMsSqlColumnBuilders, type MsSqlColumnBuilders } from './columns/all.ts';
-import type { MsSqlColumn, MsSqlColumnBuilder, MsSqlColumns } from './columns/common.ts';
+import type {
+	MsSqlBuildColumns,
+	MsSqlColumn,
+	MsSqlColumnBuilder,
+	MsSqlColumns,
+	MsSqlTableColumnsMap,
+} from './columns/common.ts';
 import type { ForeignKey, ForeignKeyBuilder } from './foreign-keys.ts';
 import type { AnyIndexBuilder } from './indexes.ts';
 import type { PrimaryKeyBuilder } from './primary-keys.ts';
@@ -58,19 +64,20 @@ export type AnyMsSqlTable<TPartial extends Partial<TableConfig> = {}> = MsSqlTab
 
 export type MsSqlTableWithColumns<T extends TableConfig> =
 	& MsSqlTable<T>
-	& T['columns']
+	// `embed()` groups are reached as nested objects: `users.address.city`.
+	& NestEmbedded<T['columns']>
 	& InferTableColumnsModels<T['columns']>;
 
 export function mssqlTableWithSchema<
 	TTableName extends string,
 	TSchemaName extends string | undefined,
-	TColumnsMap extends Record<string, ColumnBuilderBase>,
+	TColumnsMap extends MsSqlTableColumnsMap,
 >(
 	name: TTableName,
 	columns: TColumnsMap | ((columnTypes: MsSqlColumnBuilders) => TColumnsMap),
 	extraConfig:
 		| ((
-			self: BuildExtraConfigColumns<TTableName, TColumnsMap, 'mssql'>,
+			self: NestEmbedded<MsSqlBuildColumns<TTableName, TColumnsMap>>,
 		) => MsSqlTableExtraConfig | (MsSqlTableExtraConfigValue | MsSqlTableExtraConfigValue[])[])
 		| undefined,
 	schema: TSchemaName,
@@ -79,7 +86,7 @@ export function mssqlTableWithSchema<
 ): MsSqlTableWithColumns<{
 	name: TTableName;
 	schema: TSchemaName;
-	columns: BuildColumns<TTableName, TColumnsMap, 'mssql'>;
+	columns: MsSqlBuildColumns<TTableName, TColumnsMap>;
 	dialect: 'mssql';
 	isAlias: false;
 }> {
@@ -87,12 +94,17 @@ export function mssqlTableWithSchema<
 	const rawTable = new MsSqlTable<{
 		name: TTableName;
 		schema: TSchemaName;
-		columns: BuildColumns<TTableName, TColumnsMap, 'mssql'>;
+		columns: MsSqlBuildColumns<TTableName, TColumnsMap>;
 		dialect: 'mssql';
 		isAlias: false;
 	}>(name, schema, baseName);
 
-	const parsedColumns: TColumnsMap = typeof columns === 'function' ? columns(getMsSqlColumnBuilders()) : columns;
+	const definedColumns: TColumnsMap = typeof columns === 'function' ? columns(getMsSqlColumnBuilders()) : columns;
+	// `embed()` groups are flattened to dotted keys: `address: embed({ city })` becomes `'address.city'`.
+	const parsedColumns = flattenEmbedBuilders(
+		definedColumns as unknown as Record<string, MsSqlColumnBuilder>,
+		casingFn,
+	);
 
 	const builtColumns = Object.fromEntries(
 		Object.entries(parsedColumns).map(([name, colBuilderBase]) => {
@@ -102,16 +114,14 @@ export function mssqlTableWithSchema<
 			rawTable[InlineForeignKeys].push(...colBuilder.buildForeignKeys(column, rawTable));
 			return [name, column];
 		}),
-	) as unknown as BuildColumns<TTableName, TColumnsMap, 'mssql'>;
+	) as unknown as MsSqlBuildColumns<TTableName, TColumnsMap>;
 
-	const table = Object.assign(rawTable, builtColumns);
+	const shape = nestEmbeddedColumns(builtColumns as MsSqlColumns);
+	const table = Object.assign(rawTable, shape);
 
 	table[Table.Symbol.Columns] = builtColumns;
-	table[Table.Symbol.ExtraConfigColumns] = builtColumns as unknown as BuildExtraConfigColumns<
-		TTableName,
-		TColumnsMap,
-		'mssql'
-	>;
+	if (shape !== builtColumns) table[Table.Symbol.Shape] = shape;
+	table[Table.Symbol.ExtraConfigColumns] = shape;
 
 	if (extraConfig) {
 		table[MsSqlTable.Symbol.ExtraConfigBuilder] = extraConfig as unknown as (
@@ -125,34 +135,34 @@ export function mssqlTableWithSchema<
 export interface MsSqlTableFn<TSchema extends string | undefined = undefined> {
 	<
 		TTableName extends string,
-		TColumnsMap extends Record<string, ColumnBuilderBase>,
+		TColumnsMap extends MsSqlTableColumnsMap,
 	>(
 		name: TTableName,
 		columns: TColumnsMap,
 		extraConfig?: (
-			self: BuildExtraConfigColumns<TTableName, TColumnsMap, 'mssql'>,
+			self: NestEmbedded<MsSqlBuildColumns<TTableName, TColumnsMap>>,
 		) => (MsSqlTableExtraConfigValue | MsSqlTableExtraConfigValue[])[],
 	): MsSqlTableWithColumns<{
 		name: TTableName;
 		schema: TSchema;
-		columns: BuildColumns<TTableName, TColumnsMap, 'mssql'>;
+		columns: MsSqlBuildColumns<TTableName, TColumnsMap>;
 		dialect: 'mssql';
 		isAlias: false;
 	}>;
 
 	<
 		TTableName extends string,
-		TColumnsMap extends Record<string, ColumnBuilderBase>,
+		TColumnsMap extends MsSqlTableColumnsMap,
 	>(
 		name: TTableName,
 		columns: (columnTypes: MsSqlColumnBuilders) => TColumnsMap,
 		extraConfig?: (
-			self: BuildExtraConfigColumns<TTableName, TColumnsMap, 'mssql'>,
+			self: NestEmbedded<MsSqlBuildColumns<TTableName, TColumnsMap>>,
 		) => (MsSqlTableExtraConfigValue | MsSqlTableExtraConfigValue[])[],
 	): MsSqlTableWithColumns<{
 		name: TTableName;
 		schema: TSchema;
-		columns: BuildColumns<TTableName, TColumnsMap, 'mssql'>;
+		columns: MsSqlBuildColumns<TTableName, TColumnsMap>;
 		dialect: 'mssql';
 		isAlias: false;
 	}>;

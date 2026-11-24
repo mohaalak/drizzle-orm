@@ -6,6 +6,7 @@ import {
 	cockroachTable,
 	cockroachView,
 	customType,
+	embed,
 	int4,
 	text,
 } from 'drizzle-orm/cockroach-core';
@@ -13,7 +14,7 @@ import { CONSTANTS } from 'drizzle-orm/utils';
 import { createInsertSchema, createSchemaFactory, createSelectSchema, createUpdateSchema } from 'drizzle-orm/zod';
 import { jsonSchema } from 'drizzle-orm/zod/column';
 import type { TopLevelCondition } from 'json-rules-engine';
-import { test } from 'vitest';
+import { expect, test } from 'vitest';
 import { z } from 'zod/v4';
 import { Expect, expectEnumValues, expectSchemaShape } from './utils';
 
@@ -86,6 +87,69 @@ test('table - update', (t) => {
 	});
 	expectSchemaShape(t, expected).from(result);
 	Expect<Equal<typeof result, typeof expected>>();
+});
+
+const embedTable = cockroachTable('test', {
+	id: int4().generatedAlwaysAsIdentity().primaryKey(),
+	address: embed({
+		city: text().notNull(),
+		zip: int4(),
+		geo: embed({ lat: int4().notNull(), lng: int4().notNull() }),
+	}),
+	tags: embed({ main: text(), extra: text() }),
+});
+
+test('embedded columns - select/insert/update', (t) => {
+	const select = createSelectSchema(embedTable);
+	const expectedSelect = z.object({
+		id: int4Schema,
+		address: z.object({
+			city: textSchema,
+			zip: int4NullableSchema,
+			geo: z.object({ lat: int4Schema, lng: int4Schema }),
+		}),
+		tags: z.object({ main: textSchema.nullable(), extra: textSchema.nullable() }),
+	});
+	expectSchemaShape(t, expectedSelect).from(select);
+	expectSchemaShape(t, expectedSelect.shape.address).from(select.shape.address);
+	Expect<Equal<typeof select, typeof expectedSelect>>();
+
+	const row = {
+		id: 1,
+		address: { city: 'Berlin', zip: null, geo: { lat: 1, lng: 2 } },
+		tags: { main: 'a', extra: null },
+	};
+	expect(select.parse(row)).toStrictEqual(row);
+	expect(select.safeParse({ id: 1, 'address.city': 'Berlin' }).success).toBe(false);
+
+	const insert = createInsertSchema(embedTable);
+	const expectedInsert = z.object({
+		address: z.object({
+			city: textSchema,
+			zip: int4NullableOptionalSchema,
+			geo: z.object({ lat: int4Schema, lng: int4Schema }),
+		}),
+		tags: z.object({ main: textSchema.nullable().optional(), extra: textSchema.nullable().optional() }).optional(),
+	});
+	expectSchemaShape(t, expectedInsert).from(insert);
+	Expect<Equal<typeof insert, typeof expectedInsert>>();
+	expect(insert.safeParse({ address: { city: 'Berlin', geo: { lat: 1, lng: 2 } } }).success).toBe(true);
+	expect(insert.safeParse({ address: { geo: { lat: 1, lng: 2 } } }).success).toBe(false);
+
+	const update = createUpdateSchema(embedTable);
+	const expectedUpdate = z.object({
+		address: z.object({
+			city: textOptionalSchema,
+			zip: int4NullableOptionalSchema,
+			geo: z.object({ lat: int4OptionalSchema, lng: int4OptionalSchema }).nullable().optional(),
+		}).nullable().optional(),
+		tags: z.object({ main: textSchema.nullable().optional(), extra: textSchema.nullable().optional() }).nullable()
+			.optional(),
+	});
+	expectSchemaShape(t, expectedUpdate).from(update);
+	Expect<Equal<typeof update, typeof expectedUpdate>>();
+	expect(update.safeParse({ address: { geo: { lat: 3 } } }).success).toBe(true);
+	expect(update.safeParse({ tags: null }).success).toBe(true);
 });
 
 test('view qb - select', (t) => {

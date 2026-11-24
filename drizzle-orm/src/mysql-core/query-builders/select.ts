@@ -1,3 +1,4 @@
+import { getTableShape } from '~/embed.ts';
 import { entityKind, is } from '~/entity.ts';
 import type { MySqlColumn } from '~/mysql-core/columns/index.ts';
 import type { MySqlDialect } from '~/mysql-core/dialect.ts';
@@ -18,15 +19,8 @@ import { SelectionProxyHandler } from '~/selection-proxy.ts';
 import type { ColumnsSelection, CommentInput, Placeholder, Query } from '~/sql/sql.ts';
 import { SQL, sql } from '~/sql/sql.ts';
 import { Subquery } from '~/subquery.ts';
-import { Table } from '~/table.ts';
 import type { ValueOrArray } from '~/utils.ts';
-import {
-	getTableColumns,
-	getTableLikeName,
-	haveSameKeys,
-	orderSelectedFields,
-	resolveNullableObjectPaths,
-} from '~/utils.ts';
+import { getTableLikeName, haveSameKeys, orderSelectedFields, resolveNullableObjectPaths } from '~/utils.ts';
 import { ViewBaseConfig } from '~/view-common.ts';
 import { View } from '~/view.ts';
 import type { IndexBuilder } from '../indexes.ts';
@@ -146,7 +140,7 @@ export class MySqlSelectBuilder<
 		} else if (is(source, SQL)) {
 			fields = {};
 		} else {
-			fields = getTableColumns<MySqlTable>(source);
+			fields = getTableShape(source) as SelectedFields;
 		}
 
 		let useIndex: string[] = [];
@@ -341,7 +335,7 @@ export class MySqlSelectBase<
 						? table._.selectedFields
 						: is(table, View)
 						? table[ViewBaseConfig].selectedFields
-						: table[Table.Symbol.Columns];
+						: getTableShape(table);
 					this.config.fields[tableName] = selection;
 				}
 			}

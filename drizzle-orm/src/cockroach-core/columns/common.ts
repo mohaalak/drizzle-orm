@@ -3,10 +3,11 @@ import { ForeignKeyBuilder } from '~/cockroach-core/foreign-keys.ts';
 import type { AnyCockroachTable, CockroachTable } from '~/cockroach-core/table.ts';
 import type { ColumnType, GeneratedColumnConfig, GeneratedIdentityConfig } from '~/column-builder.ts';
 import { Column } from '~/column.ts';
+import type { EmbedBuilder, FlattenEmbedBuilders, UnionColumnMarkers } from '~/embed.ts';
 import { entityKind, is } from '~/entity.ts';
 import type { SQL } from '~/sql/sql.ts';
 import { iife } from '~/tracing-utils.ts';
-import type { Update } from '~/utils.ts';
+import type { Assume, Update } from '~/utils.ts';
 import type { CockroachType } from '../codecs.ts';
 
 export type CockroachArrayDimension = 0 | 1 | 2 | 3 | 4 | 5;
@@ -105,9 +106,9 @@ type ResolveData<T extends CockroachColumnBuilderConfig> = T['dimensions'] exten
 	: GetBaseData<T>;
 
 export type ResolveCockroachColumnConfig<
-	out T extends CockroachColumnBuilderConfig,
-	out TTableName extends string,
-	out TData = ResolveData<T>,
+	T extends CockroachColumnBuilderConfig,
+	TTableName extends string,
+	TData = ResolveData<T>,
 > = {
 	name: string;
 	tableName: TTableName;
@@ -123,7 +124,7 @@ export type ResolveCockroachColumnConfig<
 	enumValues: T extends { enumValues: infer E extends string[] } ? E : undefined;
 	identity: T['identity'] extends 'always' | 'byDefault' ? T['identity'] : undefined;
 	generated: T['generated'] extends true ? true : undefined;
-} & {};
+} & UnionColumnMarkers<T>;
 
 export interface AnyCockroachColumnBuilder {
 	readonly _: CockroachColumnBuilderConfig;
@@ -138,20 +139,36 @@ export type CockroachBuildColumn<
 	>,
 > = CockroachColumn<ColumnType, TBuiltConfig, {}>;
 
+/** A table definition: column builders, optionally grouped with `embed()`. */
+export type CockroachTableColumnsMap = Record<string, AnyCockroachColumnBuilder | EmbedBuilder>;
+
+type HasEmbeds<TConfigMap> = [Extract<TConfigMap[keyof TConfigMap], EmbedBuilder>] extends [never] ? false : true;
+
 export type CockroachBuildColumns<
-	out TTableName extends string,
-	out TConfigMap extends Record<string, AnyCockroachColumnBuilder>,
+	TTableName extends string,
+	TConfigMap extends CockroachTableColumnsMap,
+> = HasEmbeds<TConfigMap> extends true ? CockroachBuildFlatColumns<TTableName, FlattenEmbedBuilders<TConfigMap>>
+	: CockroachBuildFlatColumns<TTableName, TConfigMap>;
+
+type CockroachBuildFlatColumns<
+	TTableName extends string,
+	TConfigMap,
 > =
 	& {
-		[Key in keyof TConfigMap]: CockroachBuildColumn<TTableName, TConfigMap[Key]>;
+		[Key in keyof TConfigMap]: CockroachBuildColumn<
+			TTableName,
+			Assume<TConfigMap[Key], AnyCockroachColumnBuilder>
+		>;
 	}
 	& {};
 
 export type CockroachBuildExtraConfigColumns<
-	out TConfigMap extends Record<string, AnyCockroachColumnBuilder>,
+	out TConfigMap extends CockroachTableColumnsMap,
 > =
 	& {
-		[Key in keyof TConfigMap]: ExtraConfigColumn;
+		[Key in keyof TConfigMap]: TConfigMap[Key] extends EmbedBuilder<infer TInner>
+			? CockroachBuildExtraConfigColumns<TInner>
+			: ExtraConfigColumn;
 	}
 	& {};
 

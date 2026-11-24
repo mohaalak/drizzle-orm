@@ -1,6 +1,7 @@
 import type * as Effect from 'effect/Effect';
 import type { SqlError } from 'effect/sql/SqlError';
 import type { QueryEffectHKTBase } from '~/effect-core/query-effect.ts';
+import type { InsertColumnListArg, InsertColumnListKey, ResolvedInsertColumnList } from '~/embed.ts';
 import { entityKind } from '~/entity.ts';
 import type { PgDialect } from '~/pg-core/dialect.ts';
 import type { PgInsertBuilder } from '~/pg-core/query-builders/insert.ts';
@@ -10,9 +11,9 @@ import type { PgTable } from '~/pg-core/table.ts';
 import type { AnyRelations, EmptyRelations } from '~/relations.ts';
 import type { SQL, SQLWrapper } from '~/sql/sql.ts';
 import type { WithSubquery } from '~/subquery.ts';
-import type { InferInsertModel, RequiredInsertKeys } from '~/table.ts';
+import type { InferInsertColumns, RequiredInsertKeys } from '~/table.ts';
 import type { PgColumn } from '../columns/common.ts';
-import { PgDatabase, type PgDatabaseBuilders, type PgInsertColumns } from '../db.ts';
+import { PgDatabase, type PgDatabaseBuilders } from '../db.ts';
 import type { PgProcedure, PgProcedureCallParams } from '../procedure.ts';
 import type { RelationalQueryBuilder } from '../query-builders/query.ts';
 import type { SelectedFields } from '../query-builders/select.types.ts';
@@ -208,15 +209,15 @@ export interface PgEffectDatabase<
 	 */
 	insert<
 		TTable extends PgTable,
-		TColumnList extends (keyof InferInsertModel<TTable, { override: true }>)[] = [],
+		TColumnList extends InsertColumnListKey<InferInsertColumns<TTable, { override: true }>>[] = [],
 		TRequiredKeys extends string = RequiredInsertKeys<TTable>,
 	>(
 		table: TTable,
-		...columns: PgInsertColumns<TColumnList, TRequiredKeys>
+		...columns: InsertColumnListArg<InferInsertColumns<TTable, { override: true }>, TColumnList, TRequiredKeys>
 	): PgInsertBuilder<
 		TTable,
 		TQueryResult,
-		TColumnList extends [] ? 'all' : TColumnList,
+		ResolvedInsertColumnList<InferInsertColumns<TTable, { override: true }>, TColumnList>,
 		false,
 		PgEffectInsertHKT<TEffectHKT>
 	>;

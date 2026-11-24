@@ -1,0 +1,16 @@
+export {
+	embed,
+	EmbedBuilder,
+	type EmbedConfig,
+	EmbeddedColumns,
+	type FilteredUnionTags,
+	type HasNotNullFilter,
+	type NarrowRowByFilter,
+	type NotNullFilterKeys,
+	taggedUnion,
+	UnionBuilder,
+	type UnionColumns,
+	type UnionTagBuilder,
+	UnionVariantBuilder,
+	type UnionVariantColumns,
+} from '~/embed.ts';

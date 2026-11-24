@@ -1,3 +1,4 @@
+import { hasEmbeddedRows, nestEmbeddedRelationalRows } from '~/embed.ts';
 import { entityKind, is } from '~/entity.ts';
 import type { QueryRuntimeHKT } from '~/query-builders/runtime.ts';
 import type {
@@ -180,21 +181,26 @@ export class PgRelationalQuery<THKT extends PgRelationalQueryHKTBase, TResult> i
 			const isFirst = this.mode === 'first';
 
 			const { query, builtQuery } = this._toSQL();
-			const shape = this.shape ??= dialect.shapeGenerator?.(
+			// Driver-built shapes return embedded columns under their dotted keys, so a selection
+			// reading any goes through the mapper, which nests them.
+			const shape = this.shape ??= hasEmbeddedRows(query.selection) ? undefined : dialect.shapeGenerator?.(
 				{ type: 'relational', fields: query.selection },
 				undefined,
 			);
 
 			const mapper = this.mapper ??= shape
 				? (isFirst ? (rows: any[]) => rows[0] : undefined)
-				: dialect.mapperGenerators.relationalRows({
-					isFirst,
-					parseJson: this.parseJson,
-					parseJsonIfString: false,
-					rootJsonMappers: false,
-					selection: query.selection,
-					arrayModeRoot: true,
-				});
+				: nestEmbeddedRelationalRows(
+					dialect.mapperGenerators.relationalRows({
+						isFirst,
+						parseJson: this.parseJson,
+						parseJsonIfString: false,
+						rootJsonMappers: false,
+						selection: query.selection,
+						arrayModeRoot: true,
+					}),
+					query.selection,
+				);
 
 			return this.session.prepareQuery(
 				builtQuery,

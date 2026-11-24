@@ -1,10 +1,19 @@
 import { type Equal, sql } from 'drizzle-orm';
-import { customType, int, json, serial, singlestoreSchema, singlestoreTable, text } from 'drizzle-orm/singlestore-core';
+import {
+	customType,
+	embed,
+	int,
+	json,
+	serial,
+	singlestoreSchema,
+	singlestoreTable,
+	text,
+} from 'drizzle-orm/singlestore-core';
 import { CONSTANTS } from 'drizzle-orm/utils';
 import { createInsertSchema, createSchemaFactory, createSelectSchema, createUpdateSchema } from 'drizzle-orm/zod';
 import { bigintStringModeSchema, jsonSchema, unsignedBigintStringModeSchema } from 'drizzle-orm/zod/column';
 import type { TopLevelCondition } from 'json-rules-engine';
-import { test } from 'vitest';
+import { expect, test } from 'vitest';
 import { z } from 'zod/v4';
 import { Expect, expectSchemaShape } from './utils';
 
@@ -265,6 +274,70 @@ test('refine table - insert', (t) => {
 	});
 	expectSchemaShape(t, expected).from(result);
 	Expect<Equal<typeof result, typeof expected>>();
+});
+
+test('embedded columns - select/insert/update', (t) => {
+	const table = singlestoreTable('test', {
+		id: serial().primaryKey(),
+		address: embed({
+			city: text().notNull(),
+			zip: int(),
+			geo: embed({ lat: int().notNull(), lng: int().notNull() }),
+		}),
+		tags: embed({ main: text(), extra: text() }),
+	});
+
+	const select = createSelectSchema(table);
+	const expectedSelect = z.object({
+		id: serialSchema,
+		address: z.object({
+			city: textSchema,
+			zip: intNullableSchema,
+			geo: z.object({ lat: intSchema, lng: intSchema }),
+		}),
+		tags: z.object({ main: textSchema.nullable(), extra: textSchema.nullable() }),
+	});
+	expectSchemaShape(t, expectedSelect).from(select);
+	expectSchemaShape(t, expectedSelect.shape.address).from(select.shape.address);
+	Expect<Equal<typeof select, typeof expectedSelect>>();
+	const row = {
+		id: 1,
+		address: { city: 'Berlin', zip: null, geo: { lat: 1, lng: 2 } },
+		tags: { main: 'a', extra: null },
+	};
+	expect(select.parse(row)).toStrictEqual(row);
+	expect(select.safeParse({ id: 1, 'address.city': 'Berlin' }).success).toBe(false);
+
+	const insert = createInsertSchema(table);
+	const expectedInsert = z.object({
+		id: serialOptionalSchema,
+		address: z.object({
+			city: textSchema,
+			zip: intNullableOptionalSchema,
+			geo: z.object({ lat: intSchema, lng: intSchema }),
+		}),
+		tags: z.object({ main: textSchema.nullable().optional(), extra: textSchema.nullable().optional() }).optional(),
+	});
+	expectSchemaShape(t, expectedInsert).from(insert);
+	Expect<Equal<typeof insert, typeof expectedInsert>>();
+	expect(insert.safeParse({ address: { city: 'Berlin', geo: { lat: 1, lng: 2 } } }).success).toBe(true);
+	expect(insert.safeParse({ address: { geo: { lat: 1, lng: 2 } } }).success).toBe(false);
+
+	const update = createUpdateSchema(table);
+	const expectedUpdate = z.object({
+		id: serialOptionalSchema,
+		address: z.object({
+			city: textOptionalSchema,
+			zip: intNullableOptionalSchema,
+			geo: z.object({ lat: intOptionalSchema, lng: intOptionalSchema }).nullable().optional(),
+		}).nullable().optional(),
+		tags: z.object({ main: textSchema.nullable().optional(), extra: textSchema.nullable().optional() }).nullable()
+			.optional(),
+	});
+	expectSchemaShape(t, expectedUpdate).from(update);
+	Expect<Equal<typeof update, typeof expectedUpdate>>();
+	expect(update.safeParse({}).success).toBe(true);
+	expect(update.safeParse({ address: { geo: { lat: 3 } }, tags: null }).success).toBe(true);
 });
 
 test('refine table - update', (t) => {

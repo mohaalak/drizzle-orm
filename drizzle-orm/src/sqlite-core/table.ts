@@ -1,5 +1,5 @@
 import { type Casing, getCasingFn } from '~/casing.ts';
-import type { BuildColumns, BuildExtraConfigColumns, ColumnBuilderBase } from '~/column-builder.ts';
+import { flattenEmbedBuilders, type NestEmbedded, nestEmbeddedColumns } from '~/embed.ts';
 import { entityKind } from '~/entity.ts';
 import {
 	type InferTableColumnsModels,
@@ -9,7 +9,13 @@ import {
 } from '~/table.ts';
 import type { CheckBuilder } from './checks.ts';
 import { getSQLiteColumnBuilders, type SQLiteColumnBuilders } from './columns/all.ts';
-import type { SQLiteColumn, SQLiteColumnBuilder, SQLiteColumns } from './columns/common.ts';
+import type {
+	SQLiteBuildColumns,
+	SQLiteColumn,
+	SQLiteColumnBuilder,
+	SQLiteColumns,
+	SQLiteTableColumnsMap,
+} from './columns/common.ts';
 import type { ForeignKey, ForeignKeyBuilder } from './foreign-keys.ts';
 import type { IndexBuilder } from './indexes.ts';
 import type { PrimaryKeyBuilder } from './primary-keys.ts';
@@ -58,40 +64,41 @@ export type AnySQLiteTable<TPartial extends Partial<TableConfig> = {}> = SQLiteT
 
 export type SQLiteTableWithColumns<T extends TableConfig> =
 	& SQLiteTable<T>
-	& T['columns']
+	// `embed()` groups are reached as nested objects: `users.address.city`.
+	& NestEmbedded<T['columns']>
 	& InferTableColumnsModels<T['columns']>;
 
 export interface SQLiteTableFn<TSchema extends string | undefined = undefined> {
 	<
 		TTableName extends string,
-		TColumnsMap extends Record<string, ColumnBuilderBase>,
+		TColumnsMap extends SQLiteTableColumnsMap,
 	>(
 		name: TTableName,
 		columns: TColumnsMap,
 		extraConfig?: (
-			self: BuildColumns<TTableName, TColumnsMap, 'sqlite'>,
+			self: NestEmbedded<SQLiteBuildColumns<TTableName, TColumnsMap>>,
 		) => (SQLiteTableExtraConfigValue | SQLiteTableExtraConfigValue[])[],
 	): SQLiteTableWithColumns<{
 		name: TTableName;
 		schema: TSchema;
-		columns: BuildColumns<TTableName, TColumnsMap, 'sqlite'>;
+		columns: SQLiteBuildColumns<TTableName, TColumnsMap>;
 		dialect: 'sqlite';
 		isAlias: false;
 	}>;
 
 	<
 		TTableName extends string,
-		TColumnsMap extends Record<string, ColumnBuilderBase>,
+		TColumnsMap extends SQLiteTableColumnsMap,
 	>(
 		name: TTableName,
 		columns: (columnTypes: SQLiteColumnBuilders) => TColumnsMap,
 		extraConfig?: (
-			self: BuildColumns<TTableName, TColumnsMap, 'sqlite'>,
+			self: NestEmbedded<SQLiteBuildColumns<TTableName, TColumnsMap>>,
 		) => (SQLiteTableExtraConfigValue | SQLiteTableExtraConfigValue[])[],
 	): SQLiteTableWithColumns<{
 		name: TTableName;
 		schema: TSchema;
-		columns: BuildColumns<TTableName, TColumnsMap, 'sqlite'>;
+		columns: SQLiteBuildColumns<TTableName, TColumnsMap>;
 		dialect: 'sqlite';
 		isAlias: false;
 	}>;
@@ -119,15 +126,15 @@ export interface SQLiteTableFn<TSchema extends string | undefined = undefined> {
 	 */
 	<
 		TTableName extends string,
-		TColumnsMap extends Record<string, ColumnBuilderBase>,
+		TColumnsMap extends SQLiteTableColumnsMap,
 	>(
 		name: TTableName,
 		columns: TColumnsMap,
-		extraConfig?: (self: BuildColumns<TTableName, TColumnsMap, 'sqlite'>) => SQLiteTableExtraConfig,
+		extraConfig?: (self: NestEmbedded<SQLiteBuildColumns<TTableName, TColumnsMap>>) => SQLiteTableExtraConfig,
 	): SQLiteTableWithColumns<{
 		name: TTableName;
 		schema: TSchema;
-		columns: BuildColumns<TTableName, TColumnsMap, 'sqlite'>;
+		columns: SQLiteBuildColumns<TTableName, TColumnsMap>;
 		dialect: 'sqlite';
 		isAlias: false;
 	}>;
@@ -156,15 +163,15 @@ export interface SQLiteTableFn<TSchema extends string | undefined = undefined> {
 	 */
 	<
 		TTableName extends string,
-		TColumnsMap extends Record<string, ColumnBuilderBase>,
+		TColumnsMap extends SQLiteTableColumnsMap,
 	>(
 		name: TTableName,
 		columns: (columnTypes: SQLiteColumnBuilders) => TColumnsMap,
-		extraConfig?: (self: BuildColumns<TTableName, TColumnsMap, 'sqlite'>) => SQLiteTableExtraConfig,
+		extraConfig?: (self: NestEmbedded<SQLiteBuildColumns<TTableName, TColumnsMap>>) => SQLiteTableExtraConfig,
 	): SQLiteTableWithColumns<{
 		name: TTableName;
 		schema: TSchema;
-		columns: BuildColumns<TTableName, TColumnsMap, 'sqlite'>;
+		columns: SQLiteBuildColumns<TTableName, TColumnsMap>;
 		dialect: 'sqlite';
 		isAlias: false;
 	}>;
@@ -173,14 +180,14 @@ export interface SQLiteTableFn<TSchema extends string | undefined = undefined> {
 /** @internal */
 export function sqliteTableBase<
 	TTableName extends string,
-	TColumnsMap extends Record<string, ColumnBuilderBase>,
+	TColumnsMap extends SQLiteTableColumnsMap,
 	TSchema extends string | undefined,
 >(
 	name: TTableName,
 	columns: TColumnsMap | ((columnTypes: SQLiteColumnBuilders) => TColumnsMap),
 	extraConfig:
 		| ((
-			self: BuildColumns<TTableName, TColumnsMap, 'sqlite'>,
+			self: NestEmbedded<SQLiteBuildColumns<TTableName, TColumnsMap>>,
 		) => SQLiteTableExtraConfig | (SQLiteTableExtraConfigValue | SQLiteTableExtraConfigValue[])[])
 		| undefined,
 	schema: TSchema | undefined,
@@ -189,7 +196,7 @@ export function sqliteTableBase<
 ): SQLiteTableWithColumns<{
 	name: TTableName;
 	schema: TSchema;
-	columns: BuildColumns<TTableName, TColumnsMap, 'sqlite'>;
+	columns: SQLiteBuildColumns<TTableName, TColumnsMap>;
 	dialect: 'sqlite';
 	isAlias: false;
 }> {
@@ -197,12 +204,17 @@ export function sqliteTableBase<
 	const rawTable = new SQLiteTable<{
 		name: TTableName;
 		schema: TSchema;
-		columns: BuildColumns<TTableName, TColumnsMap, 'sqlite'>;
+		columns: SQLiteBuildColumns<TTableName, TColumnsMap>;
 		dialect: 'sqlite';
 		isAlias: false;
 	}>(name, schema, baseName);
 
-	const parsedColumns: TColumnsMap = typeof columns === 'function' ? columns(getSQLiteColumnBuilders()) : columns;
+	const definedColumns: TColumnsMap = typeof columns === 'function' ? columns(getSQLiteColumnBuilders()) : columns;
+	// `embed()` groups are flattened to dotted keys: `address: embed({ city })` becomes `'address.city'`.
+	const parsedColumns = flattenEmbedBuilders(
+		definedColumns as unknown as Record<string, SQLiteColumnBuilder>,
+		casingFn,
+	);
 
 	const builtColumns = Object.fromEntries(
 		Object.entries(parsedColumns).map(([name, colBuilderBase]) => {
@@ -212,16 +224,14 @@ export function sqliteTableBase<
 			rawTable[InlineForeignKeys].push(...colBuilder.buildForeignKeys(column, rawTable));
 			return [name, column];
 		}),
-	) as unknown as BuildColumns<TTableName, TColumnsMap, 'sqlite'>;
+	) as unknown as SQLiteBuildColumns<TTableName, TColumnsMap>;
 
-	const table = Object.assign(rawTable, builtColumns);
+	const shape = nestEmbeddedColumns(builtColumns as SQLiteColumns);
+	const table = Object.assign(rawTable, shape);
 
 	table[Table.Symbol.Columns] = builtColumns;
-	table[Table.Symbol.ExtraConfigColumns] = builtColumns as unknown as BuildExtraConfigColumns<
-		TTableName,
-		TColumnsMap,
-		'sqlite'
-	>;
+	if (shape !== builtColumns) table[Table.Symbol.Shape] = shape;
+	table[Table.Symbol.ExtraConfigColumns] = shape;
 
 	if (extraConfig) {
 		table[SQLiteTable.Symbol.ExtraConfigBuilder] = extraConfig as (

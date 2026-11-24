@@ -1,5 +1,7 @@
 import { ColumnBuilder } from '~/column-builder.ts';
 import type {
+	BuildColumns,
+	ColumnBuilderBase,
 	ColumnBuilderBaseConfig,
 	ColumnBuilderExtraConfig,
 	ColumnBuilderRuntimeConfig,
@@ -9,12 +11,13 @@ import type {
 } from '~/column-builder.ts';
 import type { ColumnBaseConfig } from '~/column.ts';
 import { Column } from '~/column.ts';
+import type { EmbedBuilder, FlattenEmbedBuilders } from '~/embed.ts';
 import { entityKind } from '~/entity.ts';
 import type { ForeignKey, UpdateDeleteAction } from '~/mssql-core/foreign-keys.ts';
 import { ForeignKeyBuilder } from '~/mssql-core/foreign-keys.ts';
 import type { AnyMsSqlTable, MsSqlTable } from '~/mssql-core/table.ts';
 import type { SQL } from '~/sql/index.ts';
-import type { Update } from '~/utils.ts';
+import type { Assume, Update } from '~/utils.ts';
 import type { MsSqlType } from '../codecs.ts';
 
 export type MsSqlColumns = Record<string, MsSqlColumn<any>>;
@@ -121,6 +124,18 @@ export abstract class MsSqlColumn<
 export type AnyMsSqlColumn<TPartial extends Partial<ColumnBaseConfig<ColumnType>> = {}> = MsSqlColumn<
 	Required<Update<ColumnBaseConfig<ColumnType>, TPartial>>
 >;
+
+/** A table definition: column builders, optionally grouped with `embed()`. */
+export type MsSqlTableColumnsMap = Record<string, ColumnBuilderBase | EmbedBuilder>;
+
+type HasEmbeds<TConfigMap> = [Extract<TConfigMap[keyof TConfigMap], EmbedBuilder>] extends [never] ? false : true;
+
+export type MsSqlBuildColumns<
+	TTableName extends string,
+	TConfigMap extends MsSqlTableColumnsMap,
+> = HasEmbeds<TConfigMap> extends true
+	? BuildColumns<TTableName, Assume<FlattenEmbedBuilders<TConfigMap>, Record<string, ColumnBuilderBase>>, 'mssql'>
+	: BuildColumns<TTableName, Assume<TConfigMap, Record<string, ColumnBuilderBase>>, 'mssql'>;
 
 export interface MsSqlColumnWithIdentityConfig {
 	identity: { seed?: number; increment?: number } | undefined;

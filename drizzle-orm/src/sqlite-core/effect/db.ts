@@ -1,6 +1,7 @@
 import type { Effect } from 'effect';
 import type { SqlError } from 'effect/sql/SqlError';
 import type { QueryEffectHKTBase } from '~/effect-core/query-effect.ts';
+import type { InsertColumnListArg, InsertColumnListKey, ResolvedInsertColumnList } from '~/embed.ts';
 import { entityKind } from '~/entity.ts';
 import type { AnyRelations, EmptyRelations } from '~/relations.ts';
 import type { SQL, SQLWrapper } from '~/sql/sql.ts';
@@ -12,12 +13,10 @@ import { SQLiteEffectRelationalQuery, type SQLiteEffectRelationalQueryHKT } from
 import { SQLiteEffectRaw } from '~/sqlite-core/effect/raw.ts';
 import { SQLiteEffectSelectBase, type SQLiteEffectSelectBuilder } from '~/sqlite-core/effect/select.ts';
 import { SQLiteEffectUpdateBase, type SQLiteEffectUpdateBuilder } from '~/sqlite-core/effect/update.ts';
-import type { NoDuplicateColumns } from '~/sqlite-core/query-builders/insert.ts';
 import type { RelationalQueryBuilder } from '~/sqlite-core/query-builders/query.ts';
 import type { SQLiteTable } from '~/sqlite-core/table.ts';
 import type { WithSubquery } from '~/subquery.ts';
-import type { InferInsertModel, RequiredInsertKeys } from '~/table.ts';
-import type { DrizzleTypeError, IsNever, JoinUnion } from '~/utils.ts';
+import type { InferInsertColumns, RequiredInsertKeys } from '~/table.ts';
 import type { SelectedFields } from '../query-builders/select.types.ts';
 import type { SQLiteViewBase } from '../view-base.ts';
 import type { SQLiteEffectSession, SQLiteEffectTransaction } from './session.ts';
@@ -214,20 +213,17 @@ export interface SQLiteEffectDatabase<
 	 */
 	insert<
 		TTable extends SQLiteTable,
-		TColumnList extends (keyof InferInsertModel<TTable>)[] = [],
+		TColumnList extends InsertColumnListKey<InferInsertColumns<TTable>>[] = [],
 		TRequiredKeys extends string = RequiredInsertKeys<TTable>,
 	>(
 		into: TTable,
-		...columns: TColumnList extends [] ? []
-			: IsNever<TRequiredKeys> extends true ? TColumnList & NoDuplicateColumns<TColumnList>
-			: [TRequiredKeys] extends [TColumnList[number]] ? TColumnList & NoDuplicateColumns<TColumnList>
-			: DrizzleTypeError<
-				`Column selection is missing following required columns: ${JoinUnion<
-					`"${Exclude<TRequiredKeys, TColumnList[number]>}"`,
-					', '
-				>}`
-			>[]
-	): SQLiteEffectInsertBuilder<TTable, TRunResult, TEffectHKT, TColumnList extends [] ? 'all' : TColumnList>;
+		...columns: InsertColumnListArg<InferInsertColumns<TTable>, TColumnList, TRequiredKeys>
+	): SQLiteEffectInsertBuilder<
+		TTable,
+		TRunResult,
+		TEffectHKT,
+		ResolvedInsertColumnList<InferInsertColumns<TTable>, TColumnList>
+	>;
 
 	/**
 	 * Creates a delete query.

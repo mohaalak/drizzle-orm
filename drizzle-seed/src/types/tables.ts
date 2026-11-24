@@ -35,6 +35,32 @@ export type Column = {
 	baseColumn?: Omit<Column, 'generatedIdentityType'>;
 };
 
+/**
+ * The `taggedUnion()` groups of a table. A row holds one variant of each union: its tag column names the variant, and
+ * a column is filled only when every union it belongs to holds a variant that has it.
+ */
+export type TableUnions = {
+	/** the variant names each tag column (by its key) can take */
+	tags: { [tagColumn: string]: string[] };
+	/** every column that belongs to a union, by its key */
+	columns: {
+		[column: string]: {
+			/** whether the column was declared not null, which the table itself no longer says for a variant's column */
+			declaredNotNull: boolean;
+			/**
+			 * The tag columns that decide whether the column is filled, outermost first, each with the variants that
+			 * have it. A union's own tag column is only conditional on the unions it is nested in.
+			 */
+			levels: { tag: string; variants: string[] }[];
+			/**
+			 * The segments of the column's key that name a variant (`uploader.staff.staffId`): a union is written as the
+			 * variant it holds, `{ kind: 'staff', staffId: 1 }`, without them.
+			 */
+			variantSegments: number[];
+		};
+	};
+};
+
 export type Table = {
 	name: string;
 	columns: Column[];
@@ -43,6 +69,7 @@ export type Table = {
 	primaryKeys: string[];
 	/** column tuples declared primary at table level, which never mark their columns as primary */
 	compositePrimaryKeys: string[][];
+	unions?: TableUnions;
 };
 
 export type Relation = {

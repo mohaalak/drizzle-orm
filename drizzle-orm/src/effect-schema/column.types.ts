@@ -67,26 +67,30 @@ type GetBaseEffectSchemaType<
 type HandleSelectColumn<
 	TSchema extends SchemaTop,
 	TColumn extends Column,
-> = TColumn['_']['notNull'] extends true ? TSchema
+	TNotNull extends boolean = TColumn['_']['notNull'],
+> = [TNotNull] extends [true] ? TSchema
 	: NullOr<TSchema>;
 
 type HandleInsertColumn<
 	TSchema extends SchemaTop,
 	TColumn extends Column,
-> = TColumn['_']['notNull'] extends true ? TColumn['_']['hasDefault'] extends true ? optional<UndefinedOr<TSchema>>
+	TNotNull extends boolean = TColumn['_']['notNull'],
+> = [TNotNull] extends [true] ? TColumn['_']['hasDefault'] extends true ? optional<UndefinedOr<TSchema>>
 	: TSchema
 	: optional<UndefinedOr<NullOr<TSchema>>>;
 
 type HandleUpdateColumn<
 	TSchema extends SchemaTop,
 	TColumn extends Column,
-> = TColumn['_']['notNull'] extends true ? optional<UndefinedOr<TSchema>>
+	TNotNull extends boolean = TColumn['_']['notNull'],
+> = [TNotNull] extends [true] ? optional<UndefinedOr<TSchema>>
 	: optional<UndefinedOr<NullOr<TSchema>>>;
 
 export type HandleColumn<
 	TType extends 'select' | 'insert' | 'update',
 	TColumn extends Column,
-> = TType extends 'select' ? HandleSelectColumn<GetEffectSchemaType<TColumn>, TColumn>
-	: TType extends 'insert' ? HandleInsertColumn<GetEffectSchemaType<TColumn>, TColumn>
-	: TType extends 'update' ? HandleUpdateColumn<GetEffectSchemaType<TColumn>, TColumn>
+	TNotNull extends boolean = TColumn['_']['notNull'],
+> = TType extends 'select' ? HandleSelectColumn<GetEffectSchemaType<TColumn>, TColumn, TNotNull>
+	: TType extends 'insert' ? HandleInsertColumn<GetEffectSchemaType<TColumn>, TColumn, TNotNull>
+	: TType extends 'update' ? HandleUpdateColumn<GetEffectSchemaType<TColumn>, TColumn, TNotNull>
 	: GetEffectSchemaType<TColumn>;

@@ -1,3 +1,4 @@
+import { nestEmbeddedRelationalRows } from '~/embed.ts';
 import { entityKind, is } from '~/entity.ts';
 import type {
 	BuildQueryResult,
@@ -166,14 +167,17 @@ export class MySqlRelationalQuery<THKT extends MySqlRelationalQueryHKTBase, TRes
 	 */
 	_prepare(): MySqlBasePreparedQuery {
 		const { query, builtQuery } = this._toSQL();
-		const mapper = this.mapper ??= this.dialect.mapperGenerators.relationalRows({
-			isFirst: this.mode === 'first',
-			parseJson: false,
-			parseJsonIfString: false,
-			rootJsonMappers: false,
-			arrayModeRoot: true,
-			selection: query.selection,
-		});
+		const mapper = this.mapper ??= nestEmbeddedRelationalRows(
+			this.dialect.mapperGenerators.relationalRows({
+				isFirst: this.mode === 'first',
+				parseJson: false,
+				parseJsonIfString: false,
+				rootJsonMappers: false,
+				arrayModeRoot: true,
+				selection: query.selection,
+			}),
+			query.selection,
+		);
 
 		return this.session.prepareQuery(builtQuery, 'arrays', mapper);
 	}

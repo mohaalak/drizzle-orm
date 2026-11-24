@@ -13,6 +13,7 @@ import { geometry as pgGeometry } from '#postgres/geometry';
 import { Collect, CollectNullable, Json, JsonArray, Nullable, Transform } from '#postgres/json';
 import { getOriginalColumnFromAlias } from '~/alias.ts';
 import { Column } from '~/column.ts';
+import { selectedFieldsUnionSites } from '~/embed.ts';
 import { is } from '~/entity.ts';
 import type { SelectedFieldsOrdered } from '~/operations.ts';
 import type { PgCodecs, PostgresType } from '~/pg-core/codecs.ts';
@@ -347,10 +348,12 @@ export function buildShape(
 	selection: PreparedQuerySelection,
 	nullableObjectPaths?: string[],
 	codecs?: PgCodecs,
-): ShapeSpec {
+): ShapeSpec | undefined {
 	if (selection.type === 'relational') return relationalShape(selection.fields, codecs);
 
 	const { fields } = selection;
+	// A `taggedUnion()` is folded into the variant it holds by the rows mapper, so it is left to one.
+	if (selectedFieldsUnionSites(fields)) return undefined;
 	const leaves = new Array<WireSpec | TransformMarker>(fields.length);
 	for (let i = 0; i < fields.length; ++i) leaves[i] = plainLeaf(fields[i]!, codecs);
 	return plainShape(fields, leaves, nullableObjectPaths);
@@ -438,8 +441,10 @@ export const createShapeGenerator = (codecs: PgCodecs) => {
 		return leaf;
 	};
 
-	return (selection: PreparedQuerySelection, nullableObjectPaths: string[] | undefined): ShapeSpec => {
+	return (selection: PreparedQuerySelection, nullableObjectPaths: string[] | undefined): ShapeSpec | undefined => {
 		if (selection.type === 'relational') return buildShape(selection, nullableObjectPaths, codecs);
+		// A `taggedUnion()` is folded into the variant it holds by the rows mapper, so it is left to one.
+		if (selectedFieldsUnionSites(selection.fields)) return undefined;
 
 		if (memoized >= MAX_MEMOIZED_SHAPES) {
 			root = {};

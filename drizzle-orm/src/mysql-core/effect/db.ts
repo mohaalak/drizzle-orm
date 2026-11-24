@@ -1,15 +1,15 @@
 import type * as Effect from 'effect/Effect';
 import type { SqlError } from 'effect/sql/SqlError';
 import type { QueryEffectHKTBase } from '~/effect-core/query-effect.ts';
+import type { InsertColumnListArg, InsertColumnListKey, ResolvedInsertColumnList } from '~/embed.ts';
 import { entityKind } from '~/entity.ts';
 import type { MySqlDialect } from '~/mysql-core/dialect.ts';
 import type { AnyRelations, EmptyRelations } from '~/relations.ts';
 import type { SQL, SQLWrapper } from '~/sql/sql.ts';
 import type { WithSubquery } from '~/subquery.ts';
-import type { InferInsertModel, RequiredInsertKeys } from '~/table.ts';
-import type { DrizzleTypeError, IsNever, JoinUnion } from '~/utils.ts';
+import type { InferInsertColumns, RequiredInsertKeys } from '~/table.ts';
 import { MySqlDatabase, type MySqlDatabaseBuilders } from '../db.ts';
-import type { MySqlInsertBuilder, NoDuplicateColumns } from '../query-builders/insert.ts';
+import type { MySqlInsertBuilder } from '../query-builders/insert.ts';
 import type { RelationalQueryBuilder } from '../query-builders/query.ts';
 import type { SelectedFields } from '../query-builders/select.types.ts';
 import type { MySqlUpdateBuilder } from '../query-builders/update.ts';
@@ -203,23 +203,15 @@ export interface MySqlEffectDatabase<
 	 */
 	insert<
 		TTable extends MySqlTable,
-		TColumnList extends (keyof InferInsertModel<TTable>)[] = [],
+		TColumnList extends InsertColumnListKey<InferInsertColumns<TTable>>[] = [],
 		TRequiredKeys extends string = RequiredInsertKeys<TTable>,
 	>(
 		table: TTable,
-		...columns: TColumnList extends [] ? []
-			: IsNever<TRequiredKeys> extends true ? TColumnList & NoDuplicateColumns<TColumnList>
-			: [TRequiredKeys] extends [TColumnList[number]] ? TColumnList & NoDuplicateColumns<TColumnList>
-			: DrizzleTypeError<
-				`Column selection is missing following required columns: ${JoinUnion<
-					`"${Exclude<TRequiredKeys, TColumnList[number]>}"`,
-					', '
-				>}`
-			>[]
+		...columns: InsertColumnListArg<InferInsertColumns<TTable>, TColumnList, TRequiredKeys>
 	): MySqlInsertBuilder<
 		TTable,
 		TQueryResult,
-		TColumnList extends [] ? 'all' : TColumnList,
+		ResolvedInsertColumnList<InferInsertColumns<TTable>, TColumnList>,
 		MySqlEffectInsertHKT<TEffectHKT>
 	>;
 

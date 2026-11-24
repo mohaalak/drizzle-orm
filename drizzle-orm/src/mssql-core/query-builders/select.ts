@@ -1,3 +1,4 @@
+import { getTableShape } from '~/embed.ts';
 import { entityKind, is } from '~/entity.ts';
 import { type MsSqlType, resolveUnionType } from '~/mssql-core/codecs.ts';
 import type { MsSqlColumn } from '~/mssql-core/columns/index.ts';
@@ -21,10 +22,8 @@ import { SelectionProxyHandler } from '~/selection-proxy.ts';
 import type { ColumnsSelection, Placeholder, Query } from '~/sql/sql.ts';
 import { SQL } from '~/sql/sql.ts';
 import { Subquery } from '~/subquery.ts';
-import { Table } from '~/table.ts';
 import {
 	applyMixins,
-	getTableColumns,
 	getTableLikeName,
 	haveSameKeys,
 	orderSelectedFields,
@@ -122,7 +121,7 @@ class MsSqlSelectFromBuilderBase<
 		} else if (is(source, SQL)) {
 			fields = {};
 		} else {
-			fields = getTableColumns<MsSqlTable>(source);
+			fields = getTableShape(source) as SelectedFields;
 		}
 
 		return new MsSqlSelectBase({
@@ -262,7 +261,7 @@ export abstract class MsSqlSelectQueryBuilderBase<
 						? table._.selectedFields
 						: is(table, View)
 						? table[ViewBaseConfig].selectedFields
-						: table[Table.Symbol.Columns];
+						: getTableShape(table);
 					this.config.fields[tableName] = selection;
 				}
 			}

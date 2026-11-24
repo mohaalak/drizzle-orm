@@ -1,5 +1,6 @@
 import type { View } from '~/view.ts';
-import type { Column, Columns, GetColumnData } from './column.ts';
+import type { Column, Columns, GetColumnData, GetColumnWriteData } from './column.ts';
+import type { ApplyDomainGroupWrites, NestModel } from './embed.ts';
 import { entityKind, is } from './entity.ts';
 import type { OptionalKeyOnly, RequiredKeyOnly } from './operations.ts';
 import type { SQLChunk } from './sql/sql.ts';
@@ -13,6 +14,7 @@ import {
 	TableColumns,
 	TableName,
 	TableSchema,
+	TableShape,
 } from './table.utils.ts';
 
 /** @internal */
@@ -25,6 +27,7 @@ export {
 	Qualifier,
 	TableColumns,
 	TableSchema,
+	TableShape,
 } from './table.utils.ts';
 import type { Simplify, Update } from './utils.ts';
 
@@ -65,6 +68,7 @@ export class Table<out T extends TableConfig = TableConfig> {
 		Schema: TableSchema as typeof TableSchema,
 		OriginalName: OriginalName as typeof OriginalName,
 		Columns: TableColumns as typeof TableColumns,
+		Shape: TableShape as typeof TableShape,
 		ExtraConfigColumns: ExtraConfigColumns as typeof ExtraConfigColumns,
 		BaseName: BaseName as typeof BaseName,
 		IsAlias: IsAlias as typeof IsAlias,
@@ -88,6 +92,13 @@ export class Table<out T extends TableConfig = TableConfig> {
 
 	/** @internal */
 	[TableColumns]!: T['columns'];
+
+	/**
+	 * @internal
+	 * The columns as the table exposes them, with `embed()` groups nested. Unset when the table
+	 * has no groups, in which case it is the same as the column map.
+	 */
+	[TableShape]?: Record<string, any>;
 
 	/** @internal */
 	[ExtraConfigColumns]!: Record<string, unknown>;
@@ -196,7 +207,7 @@ export type InferModelFromColumns<
 						Key,
 						TColumns[Key]
 					>
-				]: GetColumnData<TColumns[Key], 'query'>;
+				]: GetColumnWriteData<TColumns[Key]>;
 			}
 			& {
 				[
@@ -205,7 +216,7 @@ export type InferModelFromColumns<
 						TColumns[Key],
 						TConfig['override']
 					>
-				]?: GetColumnData<TColumns[Key], 'query'> | undefined;
+				]?: GetColumnWriteData<TColumns[Key]> | undefined;
 			}
 		: {
 			[
@@ -221,11 +232,22 @@ export type InferModel<
 	TInferMode extends 'select' | 'insert' = 'select',
 > = InferModelFromColumns<TTable['_']['columns'], TInferMode>;
 
+/** A table's row, with `embed()` groups nested and each `taggedUnion()` a union of its variants. */
 export type InferSelectModel<
 	TTable extends Table,
-> = InferModelFromColumns<TTable['_']['columns'], 'select'>;
+> = NestModel<TTable['_']['columns'], 'select'>;
 
+/** What a table takes on insert, with `embed()` groups nested and each `taggedUnion()` a union of its variants. */
 export type InferInsertModel<
+	TTable extends Table,
+	TOverride extends { override?: boolean } = { override: false },
+> = ApplyDomainGroupWrites<TTable, NestModel<TTable['_']['columns'], 'insert', TOverride>>;
+
+/**
+ * {@link InferInsertModel} keyed by column: the columns of an `embed()` group stay under their dotted keys
+ * (`'address.city'`), as in the table's column map.
+ */
+export type InferInsertColumns<
 	TTable extends Table,
 	TOverride extends { override?: boolean } = { override: false },
 > = InferModelFromColumns<TTable['_']['columns'], 'insert', TOverride>;
@@ -234,8 +256,8 @@ export type InferEnum<T> = T extends { enumValues: readonly (infer U)[] } ? U
 	: never;
 
 export interface InferTableColumnsModels<TColumns extends Columns> {
-	readonly $inferSelect: InferModelFromColumns<TColumns, 'select'>;
-	readonly $inferInsert: InferModelFromColumns<TColumns, 'insert', { override: false }>;
+	readonly $inferSelect: NestModel<TColumns, 'select'>;
+	readonly $inferInsert: NestModel<TColumns, 'insert', { override: false }>;
 }
 
 export type RequiredInsertKeys<TTable extends Table, TColumns extends Record<string, Column> = TTable['_']['columns']> =

@@ -1,3 +1,4 @@
+import type { NestEmbedded } from '~/embed.ts';
 import type {
 	SelectedFields as SelectedFieldsBase,
 	SelectedFieldsFlat as SelectedFieldsFlatBase,
@@ -93,7 +94,7 @@ export type SingleStoreJoin<
 				T['_']['tableName'],
 				T['_']['selection'],
 				TJoinedName,
-				TJoinedTable extends SingleStoreTable ? TJoinedTable['_']['columns']
+				TJoinedTable extends SingleStoreTable ? NestEmbedded<TJoinedTable['_']['columns']>
 					: TJoinedTable extends Subquery ? TJoinedTable['_']['selectedFields']
 					: never,
 				T['_']['selectMode']

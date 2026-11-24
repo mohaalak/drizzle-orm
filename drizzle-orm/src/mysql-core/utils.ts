@@ -34,7 +34,9 @@ export function getTableConfig(table: MySqlTable) {
 	const extraConfigBuilder = table[MySqlTable.Symbol.ExtraConfigBuilder];
 
 	if (extraConfigBuilder !== undefined) {
-		const extraConfig = extraConfigBuilder(table[MySqlTable.Symbol.Columns]);
+		const extraConfig = extraConfigBuilder(
+			table[Table.Symbol.ExtraConfigColumns] as Parameters<typeof extraConfigBuilder>[0],
+		);
 		const extraValues = Array.isArray(extraConfig) ? extraConfig.flat(1) as any[] : Object.values(extraConfig);
 		for (const builder of Object.values(extraValues)) {
 			if (is(builder, IndexBuilder)) {

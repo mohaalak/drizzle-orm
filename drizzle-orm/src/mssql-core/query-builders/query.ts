@@ -1,3 +1,4 @@
+import { EmbeddedJsonKeySeparator, EmbeddedKeySeparator, nestEmbeddedRelationalRows } from '~/embed.ts';
 import { entityKind, is } from '~/entity.ts';
 import { QueryPromise } from '~/query-promise.ts';
 import type {
@@ -134,15 +135,20 @@ export class MsSqlRelationalQuery<TPreparedQueryHKT extends PreparedQueryHKTBase
 			return this.session.prepareQuery(
 				builtQuery,
 				'arrays',
-				this.mapper ??= dialect.mapperGenerators.relationalRows({
-					isFirst,
-					// JSON path query returns JSON as string
-					parseJson: true,
-					parseJsonIfString: false,
-					rootJsonMappers: false,
-					selection: query.selection,
-					arrayModeRoot: true,
-				}),
+				this.mapper ??= nestEmbeddedRelationalRows(
+					dialect.mapperGenerators.relationalRows({
+						isFirst,
+						// JSON path query returns JSON as string
+						parseJson: true,
+						parseJsonIfString: false,
+						rootJsonMappers: false,
+						selection: query.selection,
+						arrayModeRoot: true,
+					}),
+					query.selection,
+					// columns inside a relation's `for json path` object are keyed `address→city`
+					[EmbeddedKeySeparator, EmbeddedJsonKeySeparator],
+				),
 			) as PreparedQueryKind<TPreparedQueryHKT, PreparedQueryConfig & { execute: TResult }, true>;
 		});
 	}

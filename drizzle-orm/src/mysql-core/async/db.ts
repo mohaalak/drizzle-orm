@@ -1,12 +1,12 @@
+import type { InsertColumnListArg, InsertColumnListKey, ResolvedInsertColumnList } from '~/embed.ts';
 import { entityKind } from '~/entity.ts';
 import type { AnyRelations, EmptyRelations } from '~/relations.ts';
 import type { SQL, SQLWrapper } from '~/sql/sql.ts';
 import type { WithSubquery } from '~/subquery.ts';
-import type { InferInsertModel, RequiredInsertKeys } from '~/table.ts';
-import type { DrizzleTypeError, IsNever, JoinUnion } from '~/utils.ts';
+import type { InferInsertColumns, RequiredInsertKeys } from '~/table.ts';
 import { MySqlDatabase, type MySqlDatabaseBuilders } from '../db.ts';
 import type { MySqlDialect } from '../dialect.ts';
-import type { MySqlInsertBuilder, MySqlUpdateBuilder, NoDuplicateColumns } from '../query-builders/index.ts';
+import type { MySqlInsertBuilder, MySqlUpdateBuilder } from '../query-builders/index.ts';
 import type { RelationalQueryBuilder } from '../query-builders/query.ts';
 import type { SelectedFields } from '../query-builders/select.types.ts';
 import type { MySqlQueryResultHKT, MySqlQueryResultKind, MySqlTransactionConfig } from '../session.ts';
@@ -190,20 +190,17 @@ export interface MySqlAsyncDatabase<
 	 */
 	insert<
 		TTable extends MySqlTable,
-		TColumnList extends (keyof InferInsertModel<TTable>)[] = [],
+		TColumnList extends InsertColumnListKey<InferInsertColumns<TTable>>[] = [],
 		TRequiredKeys extends string = RequiredInsertKeys<TTable>,
 	>(
 		table: TTable,
-		...columns: TColumnList extends [] ? []
-			: IsNever<TRequiredKeys> extends true ? TColumnList & NoDuplicateColumns<TColumnList>
-			: [TRequiredKeys] extends [TColumnList[number]] ? TColumnList & NoDuplicateColumns<TColumnList>
-			: DrizzleTypeError<
-				`Column selection is missing following required columns: ${JoinUnion<
-					`"${Exclude<TRequiredKeys, TColumnList[number]>}"`,
-					', '
-				>}`
-			>[]
-	): MySqlInsertBuilder<TTable, TQueryResult, TColumnList extends [] ? 'all' : TColumnList, MySqlAsyncInsertHKT>;
+		...columns: InsertColumnListArg<InferInsertColumns<TTable>, TColumnList, TRequiredKeys>
+	): MySqlInsertBuilder<
+		TTable,
+		TQueryResult,
+		ResolvedInsertColumnList<InferInsertColumns<TTable>, TColumnList>,
+		MySqlAsyncInsertHKT
+	>;
 
 	/**
 	 * Creates a delete query.

@@ -1,3 +1,4 @@
+import { getTableShape } from '~/embed.ts';
 import { entityKind, is } from '~/entity.ts';
 import type { PgColumn } from '~/pg-core/columns/index.ts';
 import type { PgDialect } from '~/pg-core/dialect.ts';
@@ -20,11 +21,9 @@ import { SelectionProxyHandler } from '~/selection-proxy.ts';
 import { SQL, sql } from '~/sql/sql.ts';
 import type { ColumnsSelection, CommentInput, Placeholder, Query, SQLWrapper } from '~/sql/sql.ts';
 import { Subquery } from '~/subquery.ts';
-import { Table } from '~/table.ts';
 import { tracer } from '~/tracing.ts';
 import {
 	type Assume,
-	getTableColumns,
 	getTableLikeName,
 	haveSameKeys,
 	orderSelectedFields,
@@ -151,7 +150,7 @@ export class PgSelectBuilder<
 		} else if (is(src, SQL)) {
 			fields = {};
 		} else {
-			fields = getTableColumns<PgTable>(src);
+			fields = getTableShape(src) as SelectedFields;
 		}
 
 		return new this.builder({
@@ -333,7 +332,7 @@ export class PgSelectBase<
 						? table._.selectedFields
 						: is(table, View)
 						? table[ViewBaseConfig].selectedFields
-						: table[Table.Symbol.Columns];
+						: getTableShape(table);
 					this.config.fields[tableName] = selection;
 				}
 			}

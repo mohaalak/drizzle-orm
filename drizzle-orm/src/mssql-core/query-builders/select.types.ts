@@ -1,3 +1,4 @@
+import type { NestEmbedded } from '~/embed.ts';
 import type { MsSqlColumn } from '~/mssql-core/columns/index.ts';
 import type { MsSqlTable, MsSqlTableWithColumns } from '~/mssql-core/table.ts';
 import type {
@@ -105,7 +106,7 @@ export type MsSqlJoin<
 				T['_']['tableName'],
 				T['_']['selection'],
 				TJoinedName,
-				TJoinedTable extends MsSqlTable ? TJoinedTable['_']['columns']
+				TJoinedTable extends MsSqlTable ? NestEmbedded<TJoinedTable['_']['columns']>
 					: TJoinedTable extends Subquery | View ? TJoinedTable['_']['selectedFields']
 					: never,
 				T['_']['selectMode']
@@ -157,12 +158,13 @@ export type MsSqlApplyFn<
 
 export type SelectedFieldsFlat = SelectedFieldsFlatBase<MsSqlColumn>;
 
-export type SelectedFieldsFlatUpdate = {
-	inserted?: SelectedFieldsFlat | true;
-	deleted?: SelectedFieldsFlat | true;
-};
-
 export type SelectedFields = SelectedFieldsBase<MsSqlColumn, MsSqlTable>;
+
+/** `update().output()` selections. `true` returns every column of that row image. */
+export type SelectedFieldsFlatUpdate = {
+	inserted?: SelectedFields | true;
+	deleted?: SelectedFields | true;
+};
 
 export type SelectedFieldsOrdered = SelectedFieldsOrderedBase<MsSqlColumn>;
 

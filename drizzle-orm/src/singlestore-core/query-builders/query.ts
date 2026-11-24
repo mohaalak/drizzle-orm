@@ -1,3 +1,4 @@
+import { nestEmbeddedRelationalRows } from '~/embed.ts';
 import { entityKind, is } from '~/entity.ts';
 import { QueryPromise } from '~/query-promise.ts';
 import type {
@@ -102,13 +103,16 @@ export class SingleStoreRelationalQuery<
 		return this.session.prepareQuery(
 			builtQuery,
 			'objects',
-			this.mapper ??= this.dialect.mapperGenerators.relationalRows({
-				isFirst: this.mode === 'first',
-				parseJson: false,
-				parseJsonIfString: true,
-				rootJsonMappers: false,
-				selection: query.selection,
-			}),
+			this.mapper ??= nestEmbeddedRelationalRows(
+				this.dialect.mapperGenerators.relationalRows({
+					isFirst: this.mode === 'first',
+					parseJson: false,
+					parseJsonIfString: true,
+					rootJsonMappers: false,
+					selection: query.selection,
+				}),
+				query.selection,
+			),
 		) as PreparedQueryKind<TPreparedQueryHKT, SingleStorePreparedQueryConfig & { execute: TResult }, true>;
 	}
 

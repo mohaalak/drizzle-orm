@@ -5,6 +5,7 @@ import type { CockroachSession, PreparedQueryConfig } from '~/cockroach-core/ses
 import type { SubqueryWithSelection } from '~/cockroach-core/subquery.ts';
 import type { CockroachTable } from '~/cockroach-core/table.ts';
 import { CockroachViewBase } from '~/cockroach-core/view-base.ts';
+import { getTableShape } from '~/embed.ts';
 import { entityKind, is } from '~/entity.ts';
 import { TypedQueryBuilder } from '~/query-builders/query-builder.ts';
 import type {
@@ -23,11 +24,9 @@ import { SelectionProxyHandler } from '~/selection-proxy.ts';
 import { SQL } from '~/sql/sql.ts';
 import type { ColumnsSelection, Placeholder, Query, SQLWrapper } from '~/sql/sql.ts';
 import { Subquery } from '~/subquery.ts';
-import { Table } from '~/table.ts';
 import { tracer } from '~/tracing.ts';
 import {
 	applyMixins,
-	getTableColumns,
 	getTableLikeName,
 	haveSameKeys,
 	orderSelectedFields,
@@ -128,7 +127,7 @@ export class CockroachSelectBuilder<
 		} else if (is(src, SQL)) {
 			fields = {};
 		} else {
-			fields = getTableColumns<CockroachTable>(src);
+			fields = getTableShape(src) as SelectedFields;
 		}
 
 		return (new CockroachSelectBase({
@@ -244,7 +243,7 @@ export abstract class CockroachSelectQueryBuilderBase<
 						? table._.selectedFields
 						: is(table, View)
 						? table[ViewBaseConfig].selectedFields
-						: table[Table.Symbol.Columns];
+						: getTableShape(table);
 					this.config.fields[tableName] = selection;
 				}
 			}

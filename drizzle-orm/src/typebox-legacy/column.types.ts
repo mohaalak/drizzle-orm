@@ -82,26 +82,30 @@ type GetBaseTypeboxType<
 type HandleSelectColumn<
 	TSchema extends t.TSchema,
 	TColumn extends Column,
-> = TColumn['_']['notNull'] extends true ? TSchema
+	TNotNull extends boolean = TColumn['_']['notNull'],
+> = [TNotNull] extends [true] ? TSchema
 	: t.Union<[TSchema, t.TNull]>;
 
 type HandleInsertColumn<
 	TSchema extends t.TSchema,
 	TColumn extends Column,
-> = TColumn['_']['notNull'] extends true ? TColumn['_']['hasDefault'] extends true ? t.TOptional<TSchema>
+	TNotNull extends boolean = TColumn['_']['notNull'],
+> = [TNotNull] extends [true] ? TColumn['_']['hasDefault'] extends true ? t.TOptional<TSchema>
 	: TSchema
 	: t.TOptional<t.Union<[TSchema, t.TNull]>>;
 
 type HandleUpdateColumn<
 	TSchema extends t.TSchema,
 	TColumn extends Column,
-> = TColumn['_']['notNull'] extends true ? t.TOptional<TSchema>
+	TNotNull extends boolean = TColumn['_']['notNull'],
+> = [TNotNull] extends [true] ? t.TOptional<TSchema>
 	: t.TOptional<t.Union<[TSchema, t.TNull]>>;
 
 export type HandleColumn<
 	TType extends 'select' | 'insert' | 'update',
 	TColumn extends Column,
-> = TType extends 'select' ? HandleSelectColumn<GetTypeboxType<TColumn>, TColumn>
-	: TType extends 'insert' ? HandleInsertColumn<GetTypeboxType<TColumn>, TColumn>
-	: TType extends 'update' ? HandleUpdateColumn<GetTypeboxType<TColumn>, TColumn>
+	TNotNull extends boolean = TColumn['_']['notNull'],
+> = TType extends 'select' ? HandleSelectColumn<GetTypeboxType<TColumn>, TColumn, TNotNull>
+	: TType extends 'insert' ? HandleInsertColumn<GetTypeboxType<TColumn>, TColumn, TNotNull>
+	: TType extends 'update' ? HandleUpdateColumn<GetTypeboxType<TColumn>, TColumn, TNotNull>
 	: GetTypeboxType<TColumn>;

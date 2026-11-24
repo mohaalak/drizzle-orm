@@ -1,3 +1,4 @@
+import { getTableShape } from '~/embed.ts';
 import { entityKind, is } from '~/entity.ts';
 import type { PgDialect } from '~/pg-core/dialect.ts';
 import type {
@@ -14,11 +15,11 @@ import type { SelectResultFields } from '~/query-builders/select.types.ts';
 import { SelectionProxyHandler } from '~/selection-proxy.ts';
 import { type ColumnsSelection, type CommentInput, type Query, type SQL, sql, type SQLWrapper } from '~/sql/sql.ts';
 import type { Subquery } from '~/subquery.ts';
-import { getTableName, Table } from '~/table.ts';
+import { getTableName } from '~/table.ts';
 import { type Assume, orderSelectedFields } from '~/utils.ts';
 import type { PgColumn } from '../columns/common.ts';
 import { prepareMutation } from './prepare.ts';
-import type { SelectedFieldsFlat, SelectedFieldsOrdered } from './select.types.ts';
+import type { SelectedFields, SelectedFieldsOrdered } from './select.types.ts';
 
 export type PgDeleteWithout<
 	T extends AnyPgDelete,
@@ -48,7 +49,7 @@ export type PgDelete<
 export interface PgDeleteConfig {
 	where?: SQL | undefined;
 	table: PgTable;
-	returningFields?: SelectedFieldsFlat;
+	returningFields?: SelectedFields;
 	returning?: SelectedFieldsOrdered;
 	shape?: any;
 	withList?: Subquery[];
@@ -76,7 +77,7 @@ export type PgDeleteReturningAll<
 export type PgDeleteReturning<
 	T extends AnyPgDelete,
 	TDynamic extends boolean,
-	TSelectedFields extends SelectedFieldsFlat,
+	TSelectedFields extends SelectedFields,
 > = T extends any ? PgDeleteWithout<
 		PgDeleteKind<
 			T['_']['hkt'],
@@ -265,11 +266,11 @@ export class PgDeleteBase<
 	 * ```
 	 */
 	returning(): PgDeleteReturningAll<this, TDynamic>;
-	returning<TSelectedFields extends SelectedFieldsFlat>(
+	returning<TSelectedFields extends SelectedFields>(
 		fields: TSelectedFields,
 	): PgDeleteReturning<this, TDynamic, TSelectedFields>;
 	returning(
-		fields: SelectedFieldsFlat = this.config.table[Table.Symbol.Columns],
+		fields: SelectedFields = getTableShape(this.config.table) as SelectedFields,
 	): PgDeleteReturning<this, TDynamic, any> | PgDeleteReturningAll<this, TDynamic> {
 		this.config.returningFields = fields;
 		this.config.returning = orderSelectedFields<PgColumn>(

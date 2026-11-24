@@ -1,4 +1,11 @@
-import type { GetColumnData } from '~/column.ts';
+import type { GetColumnWriteData } from '~/column.ts';
+import {
+	type ApplyDomainGroupWritesPartial,
+	getTableShape,
+	type HasEmbeddedUnions,
+	type NestEmbeddedPartial,
+	type NestModelPartial,
+} from '~/embed.ts';
 import { entityKind, is } from '~/entity.ts';
 import type { MySqlDialect } from '~/mysql-core/dialect.ts';
 import type {
@@ -14,7 +21,7 @@ import type { MySqlTable } from '~/mysql-core/table.ts';
 import { SelectionProxyHandler } from '~/selection-proxy.ts';
 import { type CommentInput, type Placeholder, type Query, type SQL, sql, type SQLWrapper } from '~/sql/sql.ts';
 import type { Subquery } from '~/subquery.ts';
-import { type InferInsertModel, Table } from '~/table.ts';
+import type { InferInsertColumns } from '~/table.ts';
 import { type Assume, mapUpdateSet, type UpdateSet, type ValueOrArray } from '~/utils.ts';
 import type { MySqlColumn } from '../columns/common.ts';
 
@@ -30,16 +37,24 @@ export interface MySqlUpdateConfig {
 
 export type MySqlUpdateSetSource<
 	TTable extends MySqlTable,
-	TModel extends Record<string, any> = InferInsertModel<TTable>,
-> =
-	& {
-		[Key in keyof TModel & string]?:
-			| GetColumnData<TTable['_']['columns'][Key], 'query'>
-			| SQL
-			| Placeholder
-			| undefined;
-	}
-	& {};
+	TModel extends Record<string, any> = InferInsertColumns<TTable>,
+> = ApplyDomainGroupWritesPartial<
+	TTable,
+	& (HasEmbeddedUnions<TTable['_']['columns']> extends true ? NestModelPartial<
+			Pick<TTable['_']['columns'], keyof TModel & string>,
+			SQL | Placeholder | undefined
+		>
+		: NestEmbeddedPartial<
+			{
+				[Key in keyof TModel & string]?:
+					| GetColumnWriteData<TTable['_']['columns'][Key]>
+					| SQL
+					| Placeholder
+					| undefined;
+			}
+		>)
+	& {}
+>;
 
 export interface MySqlUpdateBuilderConstructor {
 	new(
@@ -240,7 +255,7 @@ export class MySqlUpdateBase<
 		if (typeof columns[0] === 'function') {
 			const orderBy = columns[0](
 				new Proxy(
-					this.config.table[Table.Symbol.Columns],
+					getTableShape(this.config.table),
 					new SelectionProxyHandler({ sqlAliasedBehavior: 'alias', sqlBehavior: 'sql' }),
 				) as any,
 			);

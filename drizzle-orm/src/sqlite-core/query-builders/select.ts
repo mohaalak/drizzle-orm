@@ -1,3 +1,4 @@
+import { getTableShape } from '~/embed.ts';
 import { entityKind, is } from '~/entity.ts';
 import { TypedQueryBuilder } from '~/query-builders/query-builder.ts';
 import type {
@@ -20,9 +21,7 @@ import type { SQLiteSession } from '~/sqlite-core/session.ts';
 import type { SubqueryWithSelection } from '~/sqlite-core/subquery.ts';
 import type { SQLiteTable } from '~/sqlite-core/table.ts';
 import { Subquery } from '~/subquery.ts';
-import { Table } from '~/table.ts';
 import {
-	getTableColumns,
 	getTableLikeName,
 	haveSameKeys,
 	orderSelectedFields,
@@ -127,7 +126,7 @@ export class SQLiteSelectBuilder<
 		} else if (is(source, SQL)) {
 			fields = {};
 		} else {
-			fields = getTableColumns<SQLiteTable>(source);
+			fields = getTableShape(source) as SelectedFields;
 		}
 
 		return new this.builder({
@@ -241,7 +240,7 @@ export class SQLiteSelectBase<
 						? table._.selectedFields
 						: is(table, View)
 						? table[ViewBaseConfig].selectedFields
-						: table[Table.Symbol.Columns];
+						: getTableShape(table);
 					this.config.fields[tableName] = selection;
 				}
 			}
