@@ -262,6 +262,70 @@ describe('domain writes', () => {
 	});
 });
 
+describe('domain writes to a group whose columns have Column Schemas of their own', () => {
+	class Wallet {
+		constructor(readonly balance: Money, readonly ownerId: number) {}
+	}
+	// Decodes from the record its columns hold: `balance` is the driver's number, not a `Money`.
+	const WalletSchema = Schema.Struct({ balance: Schema.Number, ownerId: Schema.Number }).pipe(
+		Schema.decodeTo(
+			Schema.instanceOf(Wallet),
+			SchemaTransformation.transform({
+				decode: ({ balance, ownerId }: { readonly balance: number; readonly ownerId: number }) =>
+					new Wallet(new Money(balance), ownerId),
+				encode: (wallet: Wallet) => ({ balance: wallet.balance.cents, ownerId: wallet.ownerId }),
+			}),
+		),
+	);
+	type Payer = { readonly _tag: 'Staff'; readonly salary: Money } | { readonly _tag: 'System' };
+	type PayerRecord = { readonly kind: 'staff'; readonly salary: number } | { readonly kind: 'system' };
+	const PayerSchema = Schema.Union([
+		Schema.Struct({ kind: Schema.Literal('staff'), salary: Schema.Number }),
+		Schema.Struct({ kind: Schema.Literal('system') }),
+	]).pipe(
+		Schema.decodeTo(
+			Schema.declare((u): u is Payer => typeof u === 'object' && u !== null && '_tag' in u),
+			SchemaTransformation.transform({
+				decode: (record: PayerRecord): Payer =>
+					record.kind === 'staff' ? { _tag: 'Staff', salary: new Money(record.salary) } : { _tag: 'System' },
+				encode: (payer: Payer): PayerRecord =>
+					payer._tag === 'Staff' ? { kind: 'staff', salary: payer.salary.cents } : { kind: 'system' },
+			}),
+		),
+	);
+	const wallets = withDomainWrites(
+		mysqlTable('column_schema_wallets', {
+			id: serial().primaryKey(),
+			wallet: embed({ balance: int().notNull().schema(MoneySchema), ownerId: int().notNull() }).schema(WalletSchema),
+			payer: taggedUnion('kind', varchar({ length: 16 }), {
+				staff: { salary: int().notNull().schema(MoneySchema) },
+				system: {},
+			}).schema(PayerSchema),
+		}),
+	);
+	const db = drizzle.mock({ relations: defineRelations({ wallets }) });
+
+	test('an insert encodes a group once, not again through its columns', () => {
+		const query = db
+			.insert(wallets)
+			.values({ wallet: new Wallet(new Money(250), 7), payer: { _tag: 'Staff', salary: new Money(900) } })
+			.toSQL();
+		expect(query.params).toEqual([250, 7, 'staff', 900]);
+	});
+
+	test('an update encodes a group once, not again through its columns', () => {
+		const query = db
+			.update(wallets)
+			.set({ wallet: new Wallet(new Money(3), 1), payer: { _tag: 'Staff', salary: new Money(4) } })
+			.toSQL();
+		expect(query.params).toEqual([3, 1, 'staff', 4]);
+	});
+
+	test("a where value on a group's column is still encoded through the column's Column Schema", () => {
+		expect(db.select().from(wallets).where(eq(wallets.wallet.balance, new Money(5))).toSQL().params).toEqual([5]);
+	});
+});
+
 describe.skipIf(!connectionString)('column schemas against MySQL', () => {
 	let pool: Pool;
 	const relations = defineRelations({ users, accounts, places });

@@ -559,6 +559,28 @@ export type EmbeddedGroupEncoder = (value: unknown) => Record<string, unknown>;
 /** @internal */
 export const EmbeddedGroupEncoderKey = Symbol.for('drizzle:EmbeddedGroupEncoder');
 
+/**
+ * Marks a column whose driver mapping encodes through its Column Schema. `withDomainWrites` sets it.
+ *
+ * @internal
+ */
+export const DomainEncodedColumnKey = Symbol.for('drizzle:DomainEncodedColumn');
+
+/**
+ * A column's value that its group's encoder already encoded. A column marked with
+ * {@link DomainEncodedColumnKey} writes it as is, without encoding it again through its own Column Schema.
+ *
+ * @internal
+ */
+export class EncodedColumnValue {
+	static readonly [entityKind]: string = 'EncodedColumnValue';
+	static [Symbol.hasInstance](value: unknown): boolean {
+		return is(value, this);
+	}
+
+	constructor(readonly value: unknown) {}
+}
+
 /** @internal */
 export function embeddedUnionKeyOf(group: unknown): string | undefined {
 	return (group as Record<symbol, string | undefined>)[EmbeddedUnionKey];
@@ -662,16 +684,29 @@ export function flattenEmbeddedValues(table: Table, value: Record<string, unknow
 			if (leaf.startsWith(groupPath)) result[leaf] = null;
 		}
 	};
-	const visit = (shape: Record<string, Column | EmbeddedColumns>, source: Record<string, unknown>, path: string) => {
+	// A value inside a group its encoder encoded is already the driver's: a column that encodes through its
+	// own Column Schema must not encode it again.
+	const columnValue = (column: unknown, value: unknown, encoded: boolean) =>
+		encoded && value !== null && value !== undefined
+			&& (column as Record<symbol, unknown> | undefined)?.[DomainEncodedColumnKey]
+			? new EncodedColumnValue(value)
+			: value;
+	const visit = (
+		shape: Record<string, Column | EmbeddedColumns>,
+		source: Record<string, unknown>,
+		path: string,
+		encoded: boolean,
+	) => {
 		for (const [key, value] of Object.entries(source)) {
 			const node = shape[key];
 			if (!is(node, EmbeddedColumns)) {
-				result[path + key] = value;
+				result[path + key] = columnValue(node, value, encoded);
 				continue;
 			}
 			if (value === undefined) continue;
 			const encodeGroup = (node as Record<symbol, EmbeddedGroupEncoder | undefined>)[EmbeddedGroupEncoderKey];
 			const entry = encodeGroup && value !== null ? encodeGroup(value) : value;
+			const innerEncoded = encoded || (encodeGroup !== undefined && value !== null);
 			const groupPath = path + key + EmbeddedKeySeparator;
 			if (entry === null) {
 				// Writing `null` to a group clears every column in it.
@@ -688,7 +723,7 @@ export function flattenEmbeddedValues(table: Table, value: Record<string, unknow
 
 			const unionKey = embeddedUnionKeyOf(node);
 			if (unionKey === undefined) {
-				visit(node, entry, groupPath);
+				visit(node, entry, groupPath, innerEncoded);
 				continue;
 			}
 
@@ -702,23 +737,30 @@ export function flattenEmbeddedValues(table: Table, value: Record<string, unknow
 					}" must be written with "${unionKey}" set to one of ${tags.map((name) => `"${name}"`).join(', ')}`,
 				);
 			}
-			result[groupPath + unionKey] = tag;
+			result[groupPath + unionKey] = columnValue(node[unionKey], tag, innerEncoded);
 			for (const other of tags) {
 				if (other !== tag) clear(groupPath + other + EmbeddedKeySeparator);
 			}
 			const own: Record<string, unknown> = {};
 			for (const [field, value] of Object.entries(fields)) {
 				if (!shared[field]) own[field] = value;
-				else if (shared[field]!.includes(tag)) result[groupPath + field] = value;
+				else if (shared[field]!.includes(tag)) {
+					result[groupPath + field] = columnValue(node[field], value, innerEncoded);
+				}
 			}
 			// A shared column the variant does not declare is cleared like the other variants' columns.
 			for (const [field, declaredBy] of Object.entries(shared)) {
 				if (!declaredBy.includes(tag)) result[groupPath + field] = null;
 			}
-			visit((node[tag] ?? new EmbeddedColumns()) as EmbeddedColumns, own, groupPath + tag + EmbeddedKeySeparator);
+			visit(
+				(node[tag] ?? new EmbeddedColumns()) as EmbeddedColumns,
+				own,
+				groupPath + tag + EmbeddedKeySeparator,
+				innerEncoded,
+			);
 		}
 	};
-	visit(getTableShape(table), value, '');
+	visit(getTableShape(table), value, '', false);
 
 	return result;
 }
