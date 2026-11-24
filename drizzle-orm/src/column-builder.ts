@@ -1,5 +1,6 @@
 import { entityKind, is } from '~/entity.ts';
 import type { CockroachColumn, ExtraConfigColumn as CockroachExtraConfigColumn } from './cockroach-core/index.ts';
+import type { ColumnSchemaLike, ColumnSchemaMarkers, HasColumnSchema } from './column-schema.ts';
 import type { Column, ColumnBaseConfig } from './column.ts';
 import type { UnionColumnMarkers } from './embed.ts';
 import type { MsSqlColumn } from './mssql-core/index.ts';
@@ -154,27 +155,32 @@ export type MakeColumnConfig<
 	TTableName extends string,
 	TDialect extends Dialect = 'common',
 	TData = T extends { $type: infer U } ? U : T['data'],
-> = {
-	name: string;
-	tableName: TTableName;
-	dataType: T['dataType'];
-	data: TData;
-	driverParam: T['driverParam'];
-	notNull: T['notNull'] extends true ? true : false;
-	hasDefault: T['hasDefault'] extends true ? true : false;
-	isPrimaryKey: T extends { isPrimaryKey: true } ? true : false;
-	isAutoincrement: T extends { isAutoincrement: true } ? true : false;
-	hasRuntimeDefault: T extends { hasRuntimeDefault: true } ? true : false;
-	enumValues: T extends { enumValues: [string, ...string[]] } ? T['enumValues'] : undefined;
-	baseColumn: T extends { baseBuilder: infer U extends ColumnBuilderBase } ? BuildColumn<TTableName, U, TDialect>
-		: never;
-	identity: T extends { identity: 'always' } ? 'always' : T extends { identity: 'byDefault' } ? 'byDefault' : undefined;
-	generated: T extends { generated: infer G } ? unknown extends G ? undefined
-		: G extends undefined ? undefined
-		: G
-		: undefined;
-	// Markers a `taggedUnion()` column carries, as `ResolvePgColumnConfig` does for Postgres.
-} & UnionColumnMarkers<T>;
+> =
+	& {
+		name: string;
+		tableName: TTableName;
+		dataType: T['dataType'];
+		data: TData;
+		driverParam: T['driverParam'];
+		notNull: T['notNull'] extends true ? true : false;
+		hasDefault: T['hasDefault'] extends true ? true : false;
+		isPrimaryKey: T extends { isPrimaryKey: true } ? true : false;
+		isAutoincrement: T extends { isAutoincrement: true } ? true : false;
+		hasRuntimeDefault: T extends { hasRuntimeDefault: true } ? true : false;
+		enumValues: T extends { enumValues: [string, ...string[]] } ? T['enumValues'] : undefined;
+		baseColumn: T extends { baseBuilder: infer U extends ColumnBuilderBase } ? BuildColumn<TTableName, U, TDialect>
+			: never;
+		identity: T extends { identity: 'always' } ? 'always'
+			: T extends { identity: 'byDefault' } ? 'byDefault'
+			: undefined;
+		generated: T extends { generated: infer G } ? unknown extends G ? undefined
+			: G extends undefined ? undefined
+			: G
+			: undefined;
+		// Markers a `taggedUnion()` column carries, as `ResolvePgColumnConfig` does for Postgres.
+	}
+	& UnionColumnMarkers<T>
+	& ColumnSchemaMarkers<T>;
 
 export interface ColumnBuilderRuntimeConfig<TData> {
 	name: string;
@@ -192,6 +198,8 @@ export interface ColumnBuilderRuntimeConfig<TData> {
 	columnType: string;
 	generated: GeneratedColumnConfig<TData> | undefined;
 	generatedIdentity: GeneratedIdentityConfig | undefined;
+	/** The Column Schema given with `.schema(...)`. */
+	columnSchema?: ColumnSchemaLike | undefined;
 }
 
 export interface ColumnBuilderExtraConfig {
@@ -302,6 +310,26 @@ export abstract class ColumnBuilder<
 	 */
 	$type<TType>(): $Type<this, TType> {
 		return this as $Type<this, TType>;
+	}
+
+	/**
+	 * Gives the column its Column Schema: the schema from the value the driver reads to the column's
+	 * domain value. Drizzle records it without changing the column's type or its writes; read it back
+	 * with `getColumnSchema(column)`. A table wrapped in `withDomainWrites` (from `drizzle-orm/effect-schema`)
+	 * takes domain values in its writes and encodes them through it.
+	 *
+	 * @example
+	 * ```ts
+	 * const users = mysqlTable('users', {
+	 * 	id: serial().primaryKey().schema(UserId),
+	 * });
+	 * ```
+	 */
+	schema<TSchema extends ColumnSchemaLike<this['_'] extends { $type: infer U } ? U : this['_']['data']>>(
+		schema: TSchema,
+	): HasColumnSchema<this, TSchema> {
+		this.config.columnSchema = schema;
+		return this as HasColumnSchema<this, TSchema>;
 	}
 
 	/**

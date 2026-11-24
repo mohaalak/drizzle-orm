@@ -1,5 +1,5 @@
 import { type Casing, getCasingFn } from '~/casing.ts';
-import { flattenEmbedBuilders, type NestEmbedded, nestEmbeddedColumns } from '~/embed.ts';
+import { flattenEmbedBuilders, type NestEmbedded, nestEmbeddedColumns, type WithEmbedColumnSchemas } from '~/embed.ts';
 import { entityKind } from '~/entity.ts';
 import {
 	type InferTableColumnsModels,
@@ -83,13 +83,16 @@ export function mysqlTableWithSchema<
 	schema: TSchemaName,
 	casing: Casing | undefined,
 	baseName = name,
-): MySqlTableWithColumns<{
-	name: TTableName;
-	schema: TSchemaName;
-	columns: MySqlBuildColumns<TTableName, TColumnsMap>;
-	dialect: 'mysql';
-	isAlias: false;
-}> {
+): WithEmbedColumnSchemas<
+	MySqlTableWithColumns<{
+		name: TTableName;
+		schema: TSchemaName;
+		columns: MySqlBuildColumns<TTableName, TColumnsMap>;
+		dialect: 'mysql';
+		isAlias: false;
+	}>,
+	TColumnsMap
+> {
 	const casingFn = getCasingFn(casing);
 	const rawTable = new MySqlTable<{
 		name: TTableName;
@@ -142,13 +145,16 @@ export interface MySqlTableFn<TSchemaName extends string | undefined = undefined
 		extraConfig?: (
 			self: NestEmbedded<MySqlBuildColumns<TTableName, TColumnsMap>>,
 		) => (MySqlTableExtraConfigValue | MySqlTableExtraConfigValue[])[],
-	): MySqlTableWithColumns<{
-		name: TTableName;
-		schema: TSchemaName;
-		columns: MySqlBuildColumns<TTableName, TColumnsMap>;
-		dialect: 'mysql';
-		isAlias: false;
-	}>;
+	): WithEmbedColumnSchemas<
+		MySqlTableWithColumns<{
+			name: TTableName;
+			schema: TSchemaName;
+			columns: MySqlBuildColumns<TTableName, TColumnsMap>;
+			dialect: 'mysql';
+			isAlias: false;
+		}>,
+		TColumnsMap
+	>;
 
 	<
 		TTableName extends string,
@@ -159,13 +165,16 @@ export interface MySqlTableFn<TSchemaName extends string | undefined = undefined
 		extraConfig?: (
 			self: NestEmbedded<MySqlBuildColumns<TTableName, TColumnsMap>>,
 		) => (MySqlTableExtraConfigValue | MySqlTableExtraConfigValue[])[],
-	): MySqlTableWithColumns<{
-		name: TTableName;
-		schema: TSchemaName;
-		columns: MySqlBuildColumns<TTableName, TColumnsMap>;
-		dialect: 'mysql';
-		isAlias: false;
-	}>;
+	): WithEmbedColumnSchemas<
+		MySqlTableWithColumns<{
+			name: TTableName;
+			schema: TSchemaName;
+			columns: MySqlBuildColumns<TTableName, TColumnsMap>;
+			dialect: 'mysql';
+			isAlias: false;
+		}>,
+		TColumnsMap
+	>;
 	/**
 	 * @deprecated The third parameter of mysqlTable is changing and will only accept an array instead of an object
 	 *
@@ -195,13 +204,16 @@ export interface MySqlTableFn<TSchemaName extends string | undefined = undefined
 		name: TTableName,
 		columns: TColumnsMap,
 		extraConfig: (self: NestEmbedded<MySqlBuildColumns<TTableName, TColumnsMap>>) => MySqlTableExtraConfig,
-	): MySqlTableWithColumns<{
-		name: TTableName;
-		schema: TSchemaName;
-		columns: MySqlBuildColumns<TTableName, TColumnsMap>;
-		dialect: 'mysql';
-		isAlias: false;
-	}>;
+	): WithEmbedColumnSchemas<
+		MySqlTableWithColumns<{
+			name: TTableName;
+			schema: TSchemaName;
+			columns: MySqlBuildColumns<TTableName, TColumnsMap>;
+			dialect: 'mysql';
+			isAlias: false;
+		}>,
+		TColumnsMap
+	>;
 
 	/**
 	 * @deprecated The third parameter of mysqlTable is changing and will only accept an array instead of an object
@@ -232,13 +244,16 @@ export interface MySqlTableFn<TSchemaName extends string | undefined = undefined
 		name: TTableName,
 		columns: (columnTypes: MySqlColumnBuilders) => TColumnsMap,
 		extraConfig: (self: NestEmbedded<MySqlBuildColumns<TTableName, TColumnsMap>>) => MySqlTableExtraConfig,
-	): MySqlTableWithColumns<{
-		name: TTableName;
-		schema: TSchemaName;
-		columns: MySqlBuildColumns<TTableName, TColumnsMap>;
-		dialect: 'mysql';
-		isAlias: false;
-	}>;
+	): WithEmbedColumnSchemas<
+		MySqlTableWithColumns<{
+			name: TTableName;
+			schema: TSchemaName;
+			columns: MySqlBuildColumns<TTableName, TColumnsMap>;
+			dialect: 'mysql';
+			isAlias: false;
+		}>,
+		TColumnsMap
+	>;
 }
 
 /** @internal */

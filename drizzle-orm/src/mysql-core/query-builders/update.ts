@@ -1,5 +1,11 @@
-import type { GetColumnData } from '~/column.ts';
-import { getTableShape, type HasEmbeddedUnions, type NestEmbeddedPartial, type NestModelPartial } from '~/embed.ts';
+import type { GetColumnWriteData } from '~/column.ts';
+import {
+	type ApplyDomainGroupWritesPartial,
+	getTableShape,
+	type HasEmbeddedUnions,
+	type NestEmbeddedPartial,
+	type NestModelPartial,
+} from '~/embed.ts';
 import { entityKind, is } from '~/entity.ts';
 import type { MySqlDialect } from '~/mysql-core/dialect.ts';
 import type { AnyMySqlQueryResultHKT, MySqlQueryResultHKT } from '~/mysql-core/session.ts';
@@ -25,7 +31,8 @@ export interface MySqlUpdateConfig {
 export type MySqlUpdateSetSource<
 	TTable extends MySqlTable,
 	TModel extends Record<string, any> = InferInsertColumns<TTable>,
-> =
+> = ApplyDomainGroupWritesPartial<
+	TTable,
 	& (HasEmbeddedUnions<TTable['_']['columns']> extends true ? NestModelPartial<
 			Pick<TTable['_']['columns'], keyof TModel & string>,
 			SQL | Placeholder | undefined
@@ -33,13 +40,14 @@ export type MySqlUpdateSetSource<
 		: NestEmbeddedPartial<
 			{
 				[Key in keyof TModel & string]?:
-					| GetColumnData<TTable['_']['columns'][Key], 'query'>
+					| GetColumnWriteData<TTable['_']['columns'][Key]>
 					| SQL
 					| Placeholder
 					| undefined;
 			}
 		>)
-	& {};
+	& {}
+>;
 
 export interface MySqlUpdateBuilderConstructor {
 	new(

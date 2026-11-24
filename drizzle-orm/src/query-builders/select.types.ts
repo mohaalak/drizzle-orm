@@ -1,6 +1,13 @@
 import type { ChangeColumnTableName, ColumnType, Dialect } from '~/column-builder.ts';
+import type { ColumnSchemaKey } from '~/column-schema.ts';
 import type { AnyColumn, Column, ColumnBaseConfig, GetColumnData, UpdateColConfig } from '~/column.ts';
-import type { EmbeddedColumnData, EmbeddedUnionTagKey, NestEmbedded, UnionSharedColumnData } from '~/embed.ts';
+import type {
+	EmbeddedColumnData,
+	EmbeddedUnionTagKey,
+	NestEmbedded,
+	UnionSharedColumnData,
+	WithoutColumnSchema,
+} from '~/embed.ts';
 import type { SelectedFields } from '~/operations.ts';
 import type { ColumnsSelection, SQL } from '~/sql/sql.ts';
 import type { Subquery } from '~/subquery.ts';
@@ -65,7 +72,8 @@ type SelectPartialResult<TFields, TNullability extends Record<string, JoinNullab
 					'You can only select one column in the subquery'
 				>
 			: TField extends Record<string, any>
-				? [EmbeddedUnionTagKey<TField>] extends [never] ? SelectPartialGroupResult<TField, TNullability>
+				? [EmbeddedUnionTagKey<TField>] extends [never]
+					? SelectPartialGroupResult<WithoutColumnSchema<TField>, TNullability>
 					// A `taggedUnion()` group is null when its table is, like the tag column it is read by.
 				: TField[EmbeddedUnionTagKey<TField>] extends AnyColumn<{ tableName: infer TTableName extends string }>
 					? ApplyNullability<
@@ -200,8 +208,9 @@ export type SelectResultField<T, TDeep extends boolean = true> = T extends Drizz
 		? Equal<TDeep, true> extends true ? SelectResultField<NestEmbedded<T['_']['columns']>, false> : never
 	: T extends Column<any> ? GetColumnData<T>
 	: T extends SQL | SQL.Aliased ? T['_']['type']
-	: T extends Record<string, any> ? [EmbeddedUnionTagKey<T>] extends [never] ? SelectResultFields<T, true>
-		: SelectUnionResult<T, EmbeddedUnionTagKey<T>>
+	: T extends Record<string, any>
+		? [EmbeddedUnionTagKey<T>] extends [never] ? SelectResultFields<WithoutColumnSchema<T>, true>
+		: SelectUnionResult<WithoutColumnSchema<T>, EmbeddedUnionTagKey<T>>
 	: never;
 
 /**
@@ -220,7 +229,7 @@ type SelectUnionResult<T extends Record<string, any>, TKey extends keyof T & str
 
 /** A variant's columns, read as the variant declares them rather than as the database stores them. */
 type SelectUnionVariantResult<T> = {
-	[K in keyof T]: T[K] extends Column<any> ? EmbeddedColumnData<T[K]>
+	[K in keyof T as K extends typeof ColumnSchemaKey ? never : K]: T[K] extends Column<any> ? EmbeddedColumnData<T[K]>
 		: T[K] extends Record<string, any> ? [EmbeddedUnionTagKey<T[K]>] extends [never] ? SelectUnionVariantResult<T[K]>
 			: SelectUnionResult<T[K], EmbeddedUnionTagKey<T[K]>>
 		: never;
