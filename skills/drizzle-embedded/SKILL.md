@@ -80,6 +80,29 @@ Signature: `taggedUnion(tagKey, tagColumnBuilder, variants, config?)`; `config` 
   - A `where` that pins the tag narrows the result type to that variant, so you don't need to check `kind` again. Pinning means a value, `{ eq }`, or `{ in: [...] }` (which narrows to the listed variants). For example, `findFirst({ where: { uploader: { kind: 'staff' } } })` returns `uploader: { kind: 'staff'; staffId: number; note: string | null }`. This also applies to unions nested in a variant (`where: { uploader: { kind: 'parent', parent: { via: { channel: 'app' } } } }`) and to a relation's `where` inside `with`. `ne`, `OR`/`AND`/`NOT`, and filters on variant columns leave the union whole.
 - **Restrictions**: a variant cannot be named after the tag key, cannot contain a column with the tag key, and a variant column cannot be a primary key.
 
+## Column Schemas and domain writes
+
+A column or a group can carry a **Column Schema**: an Effect Schema from what the driver reads for it to its domain value. Give it with `.schema(S)` where the table defines the column or group:
+
+```ts
+const users = mysqlTable('users', {
+	id: serial().primaryKey().schema(UserId),
+	balance: int().schema(Cents), // nullable: the schema describes the non-null value
+	address: embed({
+		city: varchar({ length: 100 }).notNull().schema(City),
+		geo: embed({ lat: int().notNull(), lng: int().notNull() }).schema(GeoLocation), // decodes from { lat, lng }
+	}),
+	uploader: taggedUnion('kind', varchar({ length: 16 }), { staff: { staffId: int().notNull().schema(UserId) }, system: {} })
+		.schema(Uploader), // decodes from the union of its variant records
+});
+```
+
+- **Recording only.** `.schema(S)` changes no type, no read and no write. A column's `S['Encoded']` must be assignable to the column's data type. A group's Column Schema decodes from the record its columns hold.
+- **Reading it back**: `getColumnSchema(users.id)`, `getColumnSchema(users.address.geo)` at runtime (from `drizzle-orm`); `ColumnSchemaOf<typeof users.id>` in types. Both work on the columns and groups of a builder selection object and on `relations.users.table`. `undefined` when there is none. A group's Column Schema sits on the built group under `ColumnSchemaKey` (not enumerable; selections ignore it). Group Column Schemas are typed on `mysqlTable` tables only so far; `.schema()` on columns works in every dialect.
+- **Reads never decode** in drizzle. Rows keep the driver's values and types, with or without Column Schemas.
+- **Domain writes**: `withDomainWrites(table)` (from `drizzle-orm/effect-schema`) switches a table so inserts, updates and `where` values (`eq`, `inArray`, … and relational `where`) take each Column Schema's domain value. A nullable column takes `Option<A>` on writes (`Option.none()` writes `NULL`) and `A` in `where`; test for null with `isNull` / `isNotNull`. A group with a Column Schema takes its domain value whole, in inserts and updates. Values are encoded with `Schema.encodeSync` in the column's driver mapping; a failed encode throws. Columns without a Column Schema keep their driver types. Read types do not change, and neither does `$inferInsert`: use `InferInsertModel<typeof table>`. A `$defaultFn` / `$onUpdate` value goes through the same encoding, so it must return the domain value.
+- **`isNotNull` narrowing**: a relational `where` with `{ col: { isNotNull: true } }` (top level or inside a group, not under `AND`/`OR`/`NOT`) drops `null` from that field of the result, next to the tag narrowing. To narrow a row computed elsewhere (as `@pxp/db` does), every dialect core (`drizzle-orm/mysql-core`, …) exports the helpers: `NarrowRowByFilter<TRow, TColumns, TWhere>` (applies both narrowings), `NotNullFilterKeys<TWhere>`, `FilteredUnionTags<TTagFilter>` and `HasNotNullFilter<TWhere>`.
+
 ## Migrations
 
 drizzle-kit is the stock upstream package; it reads the table's flat columns, so `generate` and `push` see `address_city`, `uploader_kind`, etc. as plain columns. After changing a grouped schema, read the generated SQL before applying it. `drizzle-kit pull` never produces `embed()` or `taggedUnion()` — regroup pulled columns by hand.

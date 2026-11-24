@@ -20,6 +20,7 @@ import {
 	type FlattenEmbeddedColumnsConfig,
 	flattenEmbeddedColumnsConfig,
 	type HasEmbeddedUnions,
+	type HasNotNullFilter,
 	isEmbeddedGroupKey,
 	type NarrowRowByFilter,
 	type NestEmbedded,
@@ -929,13 +930,13 @@ export type InferSchemaEntrySelectModel<TEntry extends SchemaEntry> = TEntry ext
 	>['$inferSelect'];
 
 /**
- * A row of a table with `taggedUnion()` groups, narrowed by the query's `where`: a union filtered on
- * its tag comes back as the variants the filter admits.
+ * A row narrowed by the query's `where`: a `taggedUnion()` filtered on its tag comes back as the
+ * variants the filter admits, and a column filtered with `{ isNotNull: true }` as not null.
  */
 type NarrowRowByWhere<TEntry extends SchemaEntry, TRow, TWhere> = TWhere extends Record<string, unknown>
 	? TEntry extends Table<any>
-		? HasEmbeddedUnions<TEntry['_']['columns']> extends true ? NarrowRowByFilter<TRow, TEntry['_']['columns'], TWhere>
-		: TRow
+		? [HasEmbeddedUnions<TEntry['_']['columns']> | HasNotNullFilter<TWhere>] extends [false] ? TRow
+		: NarrowRowByFilter<TRow, TEntry['_']['columns'], TWhere>
 	: TRow
 	: TRow;
 
@@ -1770,13 +1771,20 @@ export interface RelationsFilterCommons<
 		| EmptyFilter;
 }
 
+/**
+ * The value a filter compares a column with: the column's data, or its Column Schema's domain value on a
+ * table wrapped in `withDomainWrites`.
+ */
+type ColumnFilterData<TColumn> = TColumn extends { _: { domainWrite: { value: infer TValue } } } ? TValue
+	: TColumn extends { _: { data: infer Data } } ? Data
+	: unknown;
+
 export type RelationsFilterColumns<
 	TColumns extends Record<string, unknown>,
 > =
 	& {
 		[K in keyof TColumns]?:
-			| (TColumns[K] extends { _: { data: infer Data } } ? RelationsFieldFilter<Data>
-				: RelationsFieldFilter<unknown>)
+			| RelationsFieldFilter<ColumnFilterData<TColumns[K]>>
 			| EmptyFilter;
 	}
 	& {
@@ -1825,8 +1833,7 @@ export type TableFilterColumns<
 > =
 	& {
 		[K in keyof TColumns]?:
-			| (TColumns[K] extends { _: { data: infer Data } } ? RelationsFieldFilter<Data>
-				: RelationsFieldFilter<unknown>)
+			| RelationsFieldFilter<ColumnFilterData<TColumns[K]>>
 			| EmptyFilter;
 	}
 	& {

@@ -1,6 +1,6 @@
 import type { View } from '~/view.ts';
-import type { Column, Columns, GetColumnData } from './column.ts';
-import type { NestModel } from './embed.ts';
+import type { Column, Columns, GetColumnData, GetColumnWriteData } from './column.ts';
+import type { ApplyDomainGroupWrites, NestModel } from './embed.ts';
 import { entityKind, is } from './entity.ts';
 import type { OptionalKeyOnly, RequiredKeyOnly } from './operations.ts';
 import type { SQLChunk } from './sql/sql.ts';
@@ -222,7 +222,7 @@ export type InferModelFromColumns<
 						Key,
 						TColumns[Key]
 					>
-				]: GetColumnData<TColumns[Key], 'query'>;
+				]: GetColumnWriteData<TColumns[Key]>;
 			}
 			& {
 				[
@@ -231,7 +231,7 @@ export type InferModelFromColumns<
 						TColumns[Key],
 						TConfig['override']
 					>
-				]?: GetColumnData<TColumns[Key], 'query'> | undefined;
+				]?: GetColumnWriteData<TColumns[Key]> | undefined;
 			}
 		: {
 			[
@@ -256,7 +256,7 @@ export type InferSelectModel<
 export type InferInsertModel<
 	TTable extends Table,
 	TOverride extends { override?: boolean } = { override: false },
-> = NestModel<TTable['_']['columns'], 'insert', TOverride>;
+> = ApplyDomainGroupWrites<TTable, NestModel<TTable['_']['columns'], 'insert', TOverride>>;
 
 /**
  * {@link InferInsertModel} keyed by column: the columns of an `embed()` group stay under their dotted keys

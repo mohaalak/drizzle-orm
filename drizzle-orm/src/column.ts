@@ -151,11 +151,25 @@ export type AnyColumn<TPartial extends Partial<ColumnBaseConfig<ColumnType>> = {
 
 export type GetColumnData<TColumn extends Column, TInferMode extends 'query' | 'raw' = 'query'> =
 	// dprint-ignore
-	TInferMode extends 'raw' // Raw mode
-		? TColumn['_']['data'] // Just return the underlying type
+	TInferMode extends 'raw' // Raw mode, as a `where` value takes it
+		? TColumn['_'] extends { domainWrite: { value: infer TValue } }
+			? TValue // A column of a table with domain writes takes its Column Schema's domain value
+			: TColumn['_']['data'] // Just return the underlying type
 		: TColumn['_']['notNull'] extends true // Query mode
 		? TColumn['_']['data'] // Query mode, not null
 		: TColumn['_']['data'] | null; // Query mode, nullable
+
+/**
+ * The value a write takes for a column: the driver's value, `null` when the column is nullable. On a
+ * table wrapped in `withDomainWrites`, a column with a Column Schema takes its domain value instead,
+ * and an `Option` of it when nullable.
+ *
+ * @param TNotNull whether the column is `NOT NULL`, when it differs from the column's own, as in a union variant
+ */
+export type GetColumnWriteData<TColumn extends Column, TNotNull = TColumn['_']['notNull']> = TColumn['_'] extends
+	{ domainWrite: { value: infer TValue; option: infer TOption } } ? TNotNull extends true ? TValue : TOption
+	: TNotNull extends true ? TColumn['_']['data']
+	: TColumn['_']['data'] | null;
 
 export type InferColumnsDataTypes<TColumns extends Record<string, Column>> = {
 	[Key in keyof TColumns]: GetColumnData<TColumns[Key], 'query'>;

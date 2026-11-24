@@ -1,5 +1,6 @@
 import type { ColumnBuilderBase } from './column-builder.ts';
-import type { Column, Columns, GetColumnData } from './column.ts';
+import { ColumnSchemaKey, type ColumnSchemaLike, type HasColumnSchema } from './column-schema.ts';
+import type { Column, Columns, GetColumnWriteData } from './column.ts';
 import { entityKind, is } from './entity.ts';
 import type { BuildRelationalQueryResult, RelationalRowsMapper } from './relations.ts';
 import type { SQL } from './sql/sql.ts';
@@ -40,12 +41,25 @@ export class EmbedBuilder<TColumns extends Record<string, ColumnBuilderBase | Em
 		readonly columns: TColumns;
 	};
 
+	/** @internal The group's Column Schema, given with {@link EmbedBuilder.schema}. */
+	columnSchema: ColumnSchemaLike | undefined;
+
 	constructor(
 		/** @internal */
 		readonly columns: TColumns,
 		/** @internal */
 		readonly config: EmbedConfig = {},
 	) {}
+
+	/**
+	 * Gives the group its Column Schema: the schema from the record its columns hold to the group's
+	 * domain value. Drizzle records it without changing the group's type or its writes; read it back
+	 * from the built table with `getColumnSchema(table.group)`.
+	 */
+	schema<TSchema extends ColumnSchemaLike>(schema: TSchema): HasColumnSchema<this, TSchema> {
+		this.columnSchema = schema;
+		return this as HasColumnSchema<this, TSchema>;
+	}
 }
 
 /**
@@ -376,9 +390,13 @@ export function flattenEmbedBuilders<TBuilder extends ColumnBuilderBase>(
 	result: Record<string, TBuilder> = {},
 	unions: readonly ActiveUnion[] = [],
 	inVariant = false,
+	groupSchemas: Readonly<Record<string, ColumnSchemaLike>> = {},
 ): Record<string, TBuilder> {
 	for (const [key, value] of Object.entries(columns)) {
 		const path = keyPrefix + key;
+		const innerGroupSchemas = is(value, EmbedBuilder) && value.columnSchema
+			? { ...groupSchemas, [path]: value.columnSchema }
+			: groupSchemas;
 		if (is(value, UnionBuilder)) {
 			const info: EmbeddedUnionInfo = { key: value.unionKey, tags: value.tags, shared: value.shared };
 			flattenEmbedBuilders(
@@ -389,6 +407,7 @@ export function flattenEmbedBuilders<TBuilder extends ColumnBuilderBase>(
 				result,
 				[...unions, { info, root: path + EmbeddedKeySeparator }],
 				inVariant,
+				innerGroupSchemas,
 			);
 			continue;
 		}
@@ -401,6 +420,7 @@ export function flattenEmbedBuilders<TBuilder extends ColumnBuilderBase>(
 				result,
 				unions,
 				inVariant || is(value, UnionVariantBuilder),
+				innerGroupSchemas,
 			);
 			continue;
 		}
@@ -410,6 +430,10 @@ export function flattenEmbedBuilders<TBuilder extends ColumnBuilderBase>(
 			(value as any).setName(namePrefix + key, casingFn);
 		}
 		if (unions.length) markUnionMember(value as ColumnBuilderBase, path, unions, inVariant);
+		if (keyPrefix) {
+			// The groups around the column that carry a Column Schema, for `nestEmbeddedColumns` to mark.
+			(value as unknown as { config: Record<string, unknown> }).config['embeddedGroupSchemas'] = groupSchemas;
+		}
 		result[path] = value as TBuilder;
 	}
 
@@ -497,11 +521,21 @@ export function nestEmbeddedColumns<TColumns extends Record<string, Column>>(
 	const result: Record<string, Column | EmbeddedColumns> = {};
 	for (const key of keys) {
 		const segments = key.split(EmbeddedKeySeparator);
-		let target: Record<string, Column | EmbeddedColumns> = result;
-		for (const segment of segments.slice(0, -1)) {
-			target = (target[segment] ??= new EmbeddedColumns()) as EmbeddedColumns;
-		}
 		const column = columns[key]!;
+		const groupSchemas = (column as unknown as {
+			config: { embeddedGroupSchemas?: Readonly<Record<string, ColumnSchemaLike>> };
+		}).config.embeddedGroupSchemas;
+		let target: Record<string, Column | EmbeddedColumns> = result;
+		let groupPath = '';
+		for (const segment of segments.slice(0, -1)) {
+			groupPath = groupPath === '' ? segment : groupPath + EmbeddedKeySeparator + segment;
+			target = (target[segment] ??= new EmbeddedColumns()) as EmbeddedColumns;
+			const groupSchema = groupSchemas?.[groupPath];
+			if (groupSchema && !Object.prototype.hasOwnProperty.call(target, ColumnSchemaKey)) {
+				// Not enumerable, so walking a group's columns never meets it.
+				Object.defineProperty(target, ColumnSchemaKey, { value: groupSchema });
+			}
+		}
 		target[segments.at(-1)!] = column;
 
 		// The tag column marks the group it sits in as a union.
@@ -513,6 +547,17 @@ export function nestEmbeddedColumns<TColumns extends Record<string, Column>>(
 
 	return result;
 }
+
+/**
+ * Encodes a group's domain value into the record of its columns' values. `withDomainWrites` sets one
+ * on each group of its table that carries a Column Schema.
+ *
+ * @internal
+ */
+export type EmbeddedGroupEncoder = (value: unknown) => Record<string, unknown>;
+
+/** @internal */
+export const EmbeddedGroupEncoderKey = Symbol.for('drizzle:EmbeddedGroupEncoder');
 
 /** @internal */
 export function embeddedUnionKeyOf(group: unknown): string | undefined {
@@ -618,13 +663,15 @@ export function flattenEmbeddedValues(table: Table, value: Record<string, unknow
 		}
 	};
 	const visit = (shape: Record<string, Column | EmbeddedColumns>, source: Record<string, unknown>, path: string) => {
-		for (const [key, entry] of Object.entries(source)) {
+		for (const [key, value] of Object.entries(source)) {
 			const node = shape[key];
 			if (!is(node, EmbeddedColumns)) {
-				result[path + key] = entry;
+				result[path + key] = value;
 				continue;
 			}
-			if (entry === undefined) continue;
+			if (value === undefined) continue;
+			const encodeGroup = (node as Record<symbol, EmbeddedGroupEncoder | undefined>)[EmbeddedGroupEncoderKey];
+			const entry = encodeGroup && value !== null ? encodeGroup(value) : value;
 			const groupPath = path + key + EmbeddedKeySeparator;
 			if (entry === null) {
 				// Writing `null` to a group clears every column in it.
@@ -1116,13 +1163,18 @@ type GroupUnionTag<TGroup> = {
 		: never;
 }[keyof TGroup & string];
 
-/** The tags a filter on a union's tag column admits: a value, `{ eq }` or `{ in }`. Anything else admits every tag. */
-type FilteredTags<TFilter> = TFilter extends string | number | boolean ? TFilter
+/**
+ * The tags a filter on a union's tag column admits: a value, `{ eq }` or `{ in }`. `never` for any
+ * other filter, which admits every tag.
+ */
+export type FilteredUnionTags<TFilter> = TFilter extends string | number | boolean ? TFilter
 	: TFilter extends { eq: infer TValue extends string | number | boolean } ? TValue
 	: TFilter extends { in: readonly (infer TValue extends string | number | boolean)[] } ? TValue
 	: never;
 
-type NarrowGroupByFilter<TValue, TGroup, TFilter> = [keyof TGroup] extends [never] ? TValue
+type NarrowGroupByFilter<TValue, TGroup, TFilter> = [keyof TGroup] extends [never]
+	// A column, which `{ isNotNull: true }` narrows to not null.
+	? TFilter extends { isNotNull: true } ? Exclude<TValue, null> : TValue
 	// Not distributed over `TValue`: a union's variants are narrowed together.
 	: TFilter extends Record<string, unknown>
 		? [TValue] extends [Record<string, unknown>]
@@ -1136,7 +1188,7 @@ type NarrowUnionByFilter<
 	TGroup,
 	TFilter extends Record<string, unknown>,
 	TTag extends string,
-	TTags = FilteredTags<TFilter[TTag]>,
+	TTags = FilteredUnionTags<TFilter[TTag]>,
 	TMatched = [TTags] extends [never] ? TValue : Extract<TValue, { [K in TTag]: TTags }>,
 > = ([TMatched] extends [never] ? TValue : TMatched) extends infer TVariant
 	? TVariant extends { [K in TTag]: infer TName extends string } ? TFilter[TName] extends Record<string, unknown>
@@ -1148,7 +1200,8 @@ type NarrowUnionByFilter<
 
 /**
  * Narrows a relational query's row by its `where`: a `taggedUnion()` filtered on its tag comes back
- * as the variants the filter admits, in the row and in nested groups and variants.
+ * as the variants the filter admits, and a column filtered with `{ isNotNull: true }` as not null,
+ * in the row and in nested groups and variants.
  * `TColumns` is the table's flat, dotted column map.
  */
 export type NarrowRowByFilter<TRow, TColumns, TFilter> = TFilter extends Record<string, unknown> ? {
@@ -1156,6 +1209,25 @@ export type NarrowRowByFilter<TRow, TColumns, TFilter> = TFilter extends Record<
 			: TRow[K];
 	}
 	: TRow;
+
+/**
+ * The keys of a `where` that filter a column with `{ isNotNull: true }`, which a read narrows to
+ * not null: `'balance'` for `{ balance: { isNotNull: true }, id: 1 }`. Keys under `AND`, `OR` and
+ * `NOT` do not narrow.
+ */
+export type NotNullFilterKeys<TFilter> = {
+	[K in keyof TFilter & string]: TFilter[K] extends { isNotNull: true } ? K : never;
+}[keyof TFilter & string];
+
+/** Whether a `where` narrows a column to not null, at its top level or inside a group. */
+export type HasNotNullFilter<TFilter> = TFilter extends Record<string, unknown> ? true extends {
+		[K in keyof TFilter & string]: K extends 'AND' | 'OR' | 'NOT' | 'RAW' ? false
+			: TFilter[K] extends { isNotNull: true } ? true
+			: TFilter[K] extends Record<string, unknown> ? HasNotNullFilter<TFilter[K]>
+			: false;
+	}[keyof TFilter & string] ? true
+	: false
+	: false;
 
 /**
  * {@link NestEmbedded} for a map whose every key is optional, such as an update's `set`. It is
@@ -1393,7 +1465,7 @@ type ModelWith<
 					'required' ? K
 					: never
 			]:
-				| ColumnValue<TColumns[K], TNotNull[K & keyof TNotNull]>
+				| GetColumnWriteData<TColumns[K], TNotNull[K & keyof TNotNull]>
 				| TExtra;
 		}
 		& {
@@ -1401,7 +1473,7 @@ type ModelWith<
 				K in keyof TColumns & string as InsertKeyKind<TColumns[K], TNotNull[K & keyof TNotNull], TOverride> extends
 					'optional' ? K : never
 			]?:
-				| ColumnValue<TColumns[K], TNotNull[K & keyof TNotNull]>
+				| GetColumnWriteData<TColumns[K], TNotNull[K & keyof TNotNull]>
 				| TExtra
 				| undefined;
 		}
@@ -1497,7 +1569,10 @@ type UnionPartial<TColumns, TPath extends string, TKey extends string, TTags, TE
 		& NestModelPartial<Assume<UnionVariantColumnsOf<TColumns, `${TPath}.${TTags}.`>, Columns>, TExtra>
 		& {
 			[F in keyof UnionSharedColumnsOf<TColumns, TPath, TTags>]?:
-				| UnionSharedColumnData<Assume<UnionSharedColumnsOf<TColumns, TPath, TTags>[F], Column>, TTags>
+				| GetColumnWriteData<
+					Assume<UnionSharedColumnsOf<TColumns, TPath, TTags>[F], Column>,
+					UnionSharedColumnNotNull<Assume<UnionSharedColumnsOf<TColumns, TPath, TTags>[F], Column>, TTags>
+				>
 				| TExtra;
 		}
 	>
@@ -1509,11 +1584,11 @@ type UnionPartial<TColumns, TPath extends string, TKey extends string, TTags, TE
  * variant's columns.
  */
 export type NestModelPartial<TColumns extends Columns, TExtra> = [UnionMemberKeys<TColumns>] extends [never]
-	? NestEmbeddedPartial<{ [K in keyof TColumns & string]?: GetColumnData<TColumns[K]> | TExtra }>
+	? NestEmbeddedPartial<{ [K in keyof TColumns & string]?: GetColumnWriteData<TColumns[K]> | TExtra }>
 	: OuterUnionTagKeys<TColumns> extends infer TTagKeys extends string ? NestEmbeddedPartial<
 			& {
 				[K in Exclude<keyof TColumns & string, `${ParentPath<TTagKeys>}.${string}`>]?:
-					| EmbeddedColumnData<TColumns[K]>
+					| GetColumnWriteData<TColumns[K], DeclaredColumnNotNull<TColumns[K]>>
 					| TExtra;
 			}
 			& {
@@ -1542,6 +1617,73 @@ type MarkUnionMember<TBuilder> = TBuilder extends { _: infer TConfig } ? {
 		>;
 	}
 	: TBuilder;
+
+type HasGroupColumnSchema<TGroup> = TGroup extends { _: { columnSchema: ColumnSchemaLike } } ? true
+	: TGroup extends EmbedBuilder<infer TInner> ? true extends {
+			[K in keyof TInner]: TInner[K] extends EmbedBuilder<any> ? HasGroupColumnSchema<TInner[K]> : false;
+		}[keyof TInner] ? true
+		: false
+	: false;
+
+/**
+ * The Column Schemas of a table definition's `embed()` / `taggedUnion()` groups, nested like the
+ * groups of the built table: `{ address: { [ColumnSchemaKey]: Address; geo: { [ColumnSchemaKey]: Geo } } }`.
+ * Only groups that carry a Column Schema, or hold one that does, appear.
+ */
+export type EmbedColumnSchemas<TColumns> = {
+	[
+		K in keyof TColumns & string as TColumns[K] extends EmbedBuilder<any>
+			? HasGroupColumnSchema<TColumns[K]> extends true ? K : never
+			: never
+	]:
+		& (TColumns[K] extends { _: { columnSchema: infer TSchema } } ? { readonly [ColumnSchemaKey]: TSchema } : {})
+		& EmbedColumnSchemas<TColumns[K] extends EmbedBuilder<infer TInner> ? TInner : never>;
+};
+
+/**
+ * A built table with the Column Schemas of its groups readable from its groups. The table's type is
+ * unchanged when no group carries a Column Schema.
+ */
+export type WithEmbedColumnSchemas<TTable, TColumns> = [keyof EmbedColumnSchemas<TColumns>] extends [never] ? TTable
+	: TTable & EmbedColumnSchemas<TColumns>;
+
+/** A group without the Column Schema it carries: the group's columns as a selection reads them. */
+export type WithoutColumnSchema<T> = T extends { readonly [ColumnSchemaKey]: unknown } ? Omit<T, typeof ColumnSchemaKey>
+	: T;
+
+type GroupWriteValue<TValue, TGroup> = TValue extends Record<string, unknown>
+	// A union's variant holds its own columns, and its groups, under the variant's name.
+	? [EmbeddedUnionTagKey<TGroup>] extends [never] ? DomainGroupWrites<TValue, TGroup>
+	: TValue extends { [K in EmbeddedUnionTagKey<TGroup>]: infer TTag extends keyof TGroup }
+		? DomainGroupWrites<TValue, TGroup[TTag]>
+	: TValue
+	: TValue;
+
+type DomainGroupWrites<TModel, TShape> = {
+	[K in keyof TModel]: K extends keyof TShape
+		? TShape[K] extends { readonly [ColumnSchemaKey]: infer TSchema extends ColumnSchemaLike } ? TSchema['Type']
+		: TShape[K] extends Column ? TModel[K]
+		: GroupWriteValue<TModel[K], TShape[K]>
+		: TModel[K];
+};
+
+/**
+ * A write's value for a table, with each `embed()` / `taggedUnion()` group that carries a Column
+ * Schema taken as its domain value, when the table is wrapped in `withDomainWrites`. Otherwise `TModel`.
+ */
+export type ApplyDomainGroupWrites<TTable, TModel> = TTable extends { readonly _: { readonly domainWrites: true } }
+	? DomainGroupWrites<TModel, TTable>
+	: TModel;
+
+/**
+ * {@link ApplyDomainGroupWrites} for an update's `set`, where every key is optional. It is a mapped type
+ * rather than a conditional one, so an empty object stays assignable to it while the table is generic.
+ */
+export type ApplyDomainGroupWritesPartial<TTable, TModel> = {
+	[K in keyof TModel]?: TTable extends { readonly _: { readonly domainWrites: true } }
+		? DomainGroupWrites<{ [P in K]: TModel[K] }, TTable>[K]
+		: TModel[K];
+};
 
 /** Whether a flat column map holds any `taggedUnion()`. */
 export type HasEmbeddedUnions<TColumns> = [UnionTagKeys<TColumns>] extends [never] ? false : true;

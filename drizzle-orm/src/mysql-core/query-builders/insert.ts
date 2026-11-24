@@ -1,4 +1,5 @@
 import {
+	type ApplyDomainGroupWrites,
 	expandInsertColumnList,
 	flattenEmbeddedValues,
 	flattenSelectedFields,
@@ -42,7 +43,8 @@ export type MySqlInsertValue<
 	TTable extends MySqlTable,
 	TColumnsList extends string[] | 'all' = 'all',
 	TModel extends Record<string, any> = InferInsertColumns<TTable>,
-> =
+> = ApplyDomainGroupWrites<
+	TTable,
 	& (HasEmbeddedUnions<TTable['_']['columns']> extends true ? NestModel<
 			TColumnsList extends 'all' ? TTable['_']['columns']
 				: Pick<TTable['_']['columns'], Extract<keyof TTable['_']['columns'], TColumnsList[number]>>,
@@ -58,7 +60,8 @@ export type MySqlInsertValue<
 					| Placeholder;
 			}
 		>)
-	& {};
+	& {}
+>;
 
 export type MySqlInsertSelection<
 	TTable extends MySqlTable,
