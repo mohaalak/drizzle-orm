@@ -76,7 +76,8 @@ export type BuildSchema<
 	TRefinements extends Record<string, any> | undefined,
 	/** The union variant the columns are built for, which gives them the nullability it declared */
 	TTag extends string | undefined = undefined,
-> = t.TObject<BuildFields<TType, TColumns, TRefinements, TTag>>;
+> = BuildFields<TType, TColumns, TRefinements, TTag> extends infer TFields extends t.TProperties ? t.TObject<TFields>
+	: never;
 
 type BuildFields<
 	TType extends 'select' | 'insert' | 'update',
@@ -94,16 +95,14 @@ type BuildFields<
 					t.TSchema
 				>
 			: HandleColumn<TType, TColumn, ColumnNotNull<TColumn, TTag>>
-			: IsNestedSelection<TColumns[K]> extends true ? [EmbeddedUnionTagKey<TColumns[K]>] extends [never] ? BuildGroup<
+			: IsNestedSelection<TColumns[K]> extends true ? [EmbeddedUnionTagKey<TColumns[K]>] extends [never] ? BuildSchema<
 						TType,
-						BuildSchema<
-							TType,
-							GetNestedSelection<TColumns[K]>,
-							TRefinements extends object ? K extends keyof TRefinements ? TRefinements[K] : undefined
-								: undefined,
-							TTag
-						>
-					>
+						GetNestedSelection<TColumns[K]>,
+						TRefinements extends object ? K extends keyof TRefinements ? TRefinements[K] : undefined
+							: undefined,
+						TTag
+					> extends infer TGroupSchema extends t.TObject ? BuildGroup<TType, TGroupSchema>
+					: never
 				: BuildUnion<
 					TType,
 					GetNestedSelection<TColumns[K]>,
@@ -120,15 +119,10 @@ type BuildFields<
  * whole, so it can be left out, but not cleared.
  */
 type BuildUnion<TType extends 'select' | 'insert' | 'update', TGroup, TRefinements> = UnionGroupTags<TGroup> extends
-	infer TTags extends string ? WrapUnion<
-		TType,
-		t.TUnion<
-			Assume<
-				UnionToTuple<TTags extends string ? BuildVariant<TType, TGroup, TTags, TTags, TRefinements> : never>,
-				t.TSchema[]
-			>
-		>
-	>
+	infer TTags extends string
+	? UnionToTuple<TTags extends string ? BuildVariant<TType, TGroup, TTags, TTags, TRefinements> : never> extends
+		infer TVariants extends t.TSchema[] ? WrapUnion<TType, t.TUnion<TVariants>>
+	: never
 	: never;
 
 type WrapUnion<TType extends 'select' | 'insert' | 'update', TSchema extends t.TSchema> = TType extends 'update'
@@ -141,21 +135,20 @@ type BuildVariant<
 	TTag extends string,
 	TTags extends string,
 	TRefinements,
-> = t.TObject<
-	Simplify<
-		& { [P in EmbeddedUnionTagKey<TGroup>]: t.TLiteral<TTag> }
-		& BuildFields<
-			TType,
-			UnionVariantFields<TGroup, TTag>,
-			TRefinements extends object ? Simplify<
-					& Omit<TRefinements, TTags>
-					& (TTag extends keyof TRefinements ? TRefinements[TTag] extends object ? TRefinements[TTag] : {} : {})
-				>
-				: undefined,
-			TTag
-		>
+> = Simplify<
+	& { [P in EmbeddedUnionTagKey<TGroup>]: t.TLiteral<TTag> }
+	& BuildFields<
+		TType,
+		UnionVariantFields<TGroup, TTag>,
+		TRefinements extends object ? Simplify<
+				& Omit<TRefinements, TTags>
+				& (TTag extends keyof TRefinements ? TRefinements[TTag] extends object ? TRefinements[TTag] : {} : {})
+			>
+			: undefined,
+		TTag
 	>
->;
+> extends infer TFields extends t.TProperties ? t.TObject<TFields>
+	: never;
 
 /**
  * Nested objects only reach insert and update schemas as tables' `embed()` groups: an insert can
