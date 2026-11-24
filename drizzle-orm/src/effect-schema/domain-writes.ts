@@ -2,7 +2,14 @@ import * as Option from 'effect/Option';
 import * as Schema from 'effect/Schema';
 import { ColumnSchemaKey, type ColumnSchemaLike, getColumnSchema } from '~/column-schema.ts';
 import type { Column } from '~/column.ts';
-import { EmbeddedColumns, type EmbeddedGroupEncoder, EmbeddedGroupEncoderKey, getTableShape } from '~/embed.ts';
+import {
+	DomainEncodedColumnKey,
+	EmbeddedColumns,
+	type EmbeddedGroupEncoder,
+	EmbeddedGroupEncoderKey,
+	EncodedColumnValue,
+	getTableShape,
+} from '~/embed.ts';
 import type { NestEmbedded } from '~/embed.ts';
 import { is } from '~/entity.ts';
 import { Table } from '~/table.ts';
@@ -45,12 +52,19 @@ function encodeColumn(column: Column, schema: ColumnSchemaLike): void {
 	const encode = Schema.encodeSync(schema as unknown as Schema.Codec<unknown, unknown, never, never>);
 	const toDriver = column.mapToDriverValue;
 	const mapToDriverValue = (value: unknown): unknown => {
-		const domain = Option.isOption(value) ? Option.getOrNull(value) : value;
-		if (domain === null) return null;
-		const encoded = encode(domain);
+		let encoded: unknown;
+		if (is(value, EncodedColumnValue)) {
+			// Its group's Column Schema already encoded it.
+			encoded = value.value;
+		} else {
+			const domain = Option.isOption(value) ? Option.getOrNull(value) : value;
+			if (domain === null) return null;
+			encoded = encode(domain);
+		}
 		return toDriver.isNoop ? encoded : toDriver.call(column, encoded);
 	};
 	(column as { mapToDriverValue: unknown }).mapToDriverValue = mapToDriverValue;
+	Object.defineProperty(column, DomainEncodedColumnKey, { value: true });
 }
 
 function encodeGroups(group: Record<string, unknown>): void {
