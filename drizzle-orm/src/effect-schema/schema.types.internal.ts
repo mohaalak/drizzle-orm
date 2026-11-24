@@ -98,16 +98,14 @@ type BuildFields<
 					SchemaTop | s.optional<SchemaTop> | s.optionalKey<SchemaTop>
 				>
 			: HandleColumn<TType, TColumn, ColumnNotNull<TColumn, TTag>>
-			: IsNestedSelection<TColumns[K]> extends true ? [EmbeddedUnionTagKey<TColumns[K]>] extends [never] ? BuildGroup<
+			: IsNestedSelection<TColumns[K]> extends true ? [EmbeddedUnionTagKey<TColumns[K]>] extends [never] ? BuildSchema<
 						TType,
-						BuildSchema<
-							TType,
-							GetNestedSelection<TColumns[K]>,
-							TRefinements extends object ? K extends keyof TRefinements ? TRefinements[K] : undefined
-								: undefined,
-							TTag
-						>
-					>
+						GetNestedSelection<TColumns[K]>,
+						TRefinements extends object ? K extends keyof TRefinements ? TRefinements[K] : undefined
+							: undefined,
+						TTag
+					> extends infer TGroupSchema extends Struct<any> ? BuildGroup<TType, TGroupSchema>
+					: never
 				: BuildUnion<
 					TType,
 					GetNestedSelection<TColumns[K]>,
@@ -124,15 +122,10 @@ type BuildFields<
  * whole, so it can be left out, but not cleared.
  */
 type BuildUnion<TType extends 'select' | 'insert' | 'update', TGroup, TRefinements> = UnionGroupTags<TGroup> extends
-	infer TTags extends string ? WrapUnion<
-		TType,
-		s.Union<
-			Assume<
-				UnionToTuple<TTags extends string ? BuildVariant<TType, TGroup, TTags, TTags, TRefinements> : never>,
-				readonly SchemaTop[]
-			>
-		>
-	>
+	infer TTags extends string
+	? UnionToTuple<TTags extends string ? BuildVariant<TType, TGroup, TTags, TTags, TRefinements> : never> extends
+		infer TVariants extends readonly SchemaTop[] ? WrapUnion<TType, s.Union<TVariants>>
+	: never
 	: never;
 
 type WrapUnion<TType extends 'select' | 'insert' | 'update', TSchema extends SchemaTop> = TType extends 'update'
@@ -145,21 +138,20 @@ type BuildVariant<
 	TTag extends string,
 	TTags extends string,
 	TRefinements,
-> = Struct<
-	Simplify<
-		& { readonly [P in EmbeddedUnionTagKey<TGroup>]: s.Literal<TTag> }
-		& BuildFields<
-			TType,
-			UnionVariantFields<TGroup, TTag>,
-			TRefinements extends object ? Simplify<
-					& Omit<TRefinements, TTags>
-					& (TTag extends keyof TRefinements ? TRefinements[TTag] extends object ? TRefinements[TTag] : {} : {})
-				>
-				: undefined,
-			TTag
-		>
+> = Simplify<
+	& { readonly [P in EmbeddedUnionTagKey<TGroup>]: s.Literal<TTag> }
+	& BuildFields<
+		TType,
+		UnionVariantFields<TGroup, TTag>,
+		TRefinements extends object ? Simplify<
+				& Omit<TRefinements, TTags>
+				& (TTag extends keyof TRefinements ? TRefinements[TTag] extends object ? TRefinements[TTag] : {} : {})
+			>
+			: undefined,
+		TTag
 	>
->;
+> extends infer TFields extends Struct.Fields ? Struct<TFields>
+	: never;
 
 /**
  * Nested objects only reach insert and update schemas as tables' `embed()` groups: an insert can
